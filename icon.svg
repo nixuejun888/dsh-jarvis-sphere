@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Neuron sphere">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0b1b26"/>
+      <stop offset="70%" stop-color="#07131b"/>
+      <stop offset="100%" stop-color="#04090d"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#glow)"/>
+  <g fill="none" stroke="#40dcff" stroke-opacity="0.55" stroke-width="0.9">
+    <circle cx="32" cy="32" r="17"/>
+    <ellipse cx="32" cy="32" rx="17" ry="6.4"/>
+    <ellipse cx="32" cy="32" rx="6.4" ry="17"/>
+    <path d="M18 21 L31 27 L45 20 M17 41 L30 38 L46 43 M22 13 L31 27 L25 51 M42 12 L33 26 L40 51"/>
+  </g>
+  <g fill="#7ceaff">
+    <circle cx="32" cy="15" r="2.4"/>
+    <circle cx="15.5" cy="32" r="2.1"/>
+    <circle cx="48.5" cy="32" r="2.1"/>
+    <circle cx="32" cy="49" r="2.4"/>
+    <circle cx="25" cy="25" r="1.7"/>
+    <circle cx="39" cy="39" r="1.7"/>
+    <circle cx="39" cy="25" r="1.5"/>
+    <circle cx="25" cy="39" r="1.5"/>
+  </g>
+  <circle cx="32" cy="32" r="3.2" fill="#ffb040" fill-opacity="0.9"/>
+</svg>

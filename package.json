@@ -1,0 +1,47 @@
+{
+  "name": "dsh-jarvis-sphere",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "贾维斯风格球形神经元背景：节点、连线与能量脉冲由当前任务的真实执行数据驱动（运行状态、模型流式速率、工具调用），整层穿透点击不影响操作。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "visualization",
+    "jarvis",
+    "canvas"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nixuejun888/dsh-jarvis-sphere.git"
+  },
+  "homepage": "https://github.com/nixuejun888/dsh-jarvis-sphere",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

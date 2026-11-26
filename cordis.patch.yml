@@ -1,0 +1,13 @@
+# 贾维斯球形神经元背景（Host 行 + Client 浮层）
+- insert:
+    - id: jarvis-sphere
+      name: dsh-jarvis-sphere
+      config:
+        enabled: true
+        nodeCount: 460
+        intensity: 1
+        opacity: 1
+        showHud: true
+        color: cyan
+        offsetX: 0
+        offsetY: 0

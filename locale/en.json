@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Jarvis sphere",
+    "description": "Draws an animated neuron sphere behind the Web GUI and drives it from what the task is actually doing: running state, model streaming rate, and tool calls. The layer is click-through.",
+    "detail": "docs/DETAIL.md"
+  }
+}
