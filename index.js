@@ -14,6 +14,7 @@ const DEFAULTS = {
   intensity: 1,
   opacity: 1,
   showHud: true,
+  glow: true,
   color: 'cyan',
   offsetX: 0,
   offsetY: 0,
