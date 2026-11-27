@@ -14,7 +14,6 @@ import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { registerKeeper } from './keeper.js'
 import { backupStatus, collectSources, createBackup, restorePlan, verifyBackup } from './backup.js'
 import { applyPlan, appendAudit, parseEntries, planOperation, readProjection } from './memory-writer.js'
@@ -604,7 +603,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false, detail: false, shape: false, scene: false, contextTool: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false, detail: false, scene: false, contextTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -958,11 +957,9 @@ function parseChronicleLine(line) {
         add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
       }
     }
-    add('shell', 'ok', 'electron ' + (shellProbe.electron || 'none') + ' · windows ' + shellProbe.windows + ' · setShape ' + (shellProbe.hasSetShape ? 'yes' : 'no') + ' · ' + shellProbe.reason)
     add('layout', 'ok', cfg.stage === true
       ? 'stage mode is on · ' + (layoutReport && layoutReport.at ? 'page picked ' + String(layoutReport.pick || 'nothing') : 'page has not reported yet')
       : 'stage mode is off; Ctrl+Shift+K switches it on')
-    add('shape', registered.shape ? 'ok' : 'degraded', registered.shape ? 'window shape route registered (spawns shape-window.ps1)' : 'window shape route is not registered; the ball window cannot be toggled')
     add('detail', registered.detail ? 'ok' : 'degraded', registered.detail ? 'read-only detail route registered' : 'detail route is not registered; the sphere cannot open its panel')
     add('scene', cfg.scene === false ? 'skip' : registered.scene && registered.contextTool ? 'ok' : 'degraded', cfg.scene === false ? 'turned off by config' : registered.scene && registered.contextTool ? 'prompt context and jarvis_context are ready' : 'scene hint missing (prompt context or jarvis_context did not register)')
 
@@ -1388,30 +1385,6 @@ function parseChronicleLine(line) {
 
   /** Answer one request from this instance's current snapshot. */
 
-  /** What this process can do to the desktop window (probe result). */
-  const shellProbe = { electron: '', windows: -1, reason: 'not probed', shaped: false }
-  async function probeShell() {
-    shellProbe.electron = String(process.versions.electron || '')
-    if (!shellProbe.electron) {
-      shellProbe.reason = 'not running under Electron'
-      return
-    }
-    try {
-      const electron = await import('electron')
-      const BrowserWindow = electron && electron.BrowserWindow
-      if (!BrowserWindow) {
-        shellProbe.reason = 'electron module has no BrowserWindow'
-        return
-      }
-      const windows = BrowserWindow.getAllWindows()
-      shellProbe.windows = windows.length
-      shellProbe.hasSetShape = windows.length > 0 && typeof windows[0].setShape === 'function'
-      shellProbe.reason = 'ok'
-    } catch (err) {
-      shellProbe.reason = 'import failed: ' + String(err && err.message)
-    }
-  }
-
   /** Last layout report posted by the page (diagnostics only). */
   let layoutReport = null
   /** Detail payloads for the clickable sphere; every kind is read-only. */
@@ -1538,60 +1511,6 @@ function parseChronicleLine(line) {
    * polls it after the primary snapshot fails the BUILD check.
    */
 
-
-  /** Ask the helper to shape (or restore) the real desktop window. */
-  const SHAPE_PATH = '/dsh-jarvis/shape'
-  const serveShape = (req, res) => {
-    if (req.method !== 'POST') {
-      res.statusCode = 405
-      res.setHeader('allow', 'POST')
-      res.end()
-      return
-    }
-    let body = ''
-    req.on('data', (chunk) => {
-      body += chunk
-      if (body.length > 2048) req.destroy()
-    })
-    req.on('end', () => {
-      let mode = 'ball'
-      try {
-        const parsed = JSON.parse(body || '{}')
-        if (parsed && parsed.mode === 'rect') mode = 'rect'
-      } catch (err) {
-        void err
-      }
-      try {
-        const script = fileURLToPath(new URL('./shape-window.ps1', import.meta.url))
-        const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', mode]
-        let child = null
-        try {
-          child = spawn('pwsh', args, { windowsHide: true })
-        } catch (spawnErr) {
-          child = spawn('powershell.exe', args, { windowsHide: true })
-        }
-        child.on('error', () => {
-          res.statusCode = 500
-          res.setHeader('content-type', 'application/json; charset=utf-8')
-          res.end(JSON.stringify({ ok: false, mode, error: 'cannot start PowerShell' }))
-        })
-        let out = ''
-        child.stdout.on('data', (chunk) => { out += String(chunk) })
-        child.stderr.on('data', (chunk) => { out += String(chunk) })
-        child.on('close', (code) => {
-          res.statusCode = code === 0 ? 200 : 500
-          res.setHeader('content-type', 'application/json; charset=utf-8')
-          res.setHeader('cache-control', 'no-store')
-          res.end(JSON.stringify({ ok: code === 0, mode, code, output: out.trim().slice(-400) }))
-        })
-      } catch (err) {
-        res.statusCode = 500
-        res.setHeader('content-type', 'application/json; charset=utf-8')
-        res.end(JSON.stringify({ ok: false, mode, error: String(err && err.message) }))
-      }
-    })
-  }
-
   /** Read-only detail route behind the clickable sphere. */
   const DETAIL_PATH = '/dsh-jarvis/detail'
   const readDetailBody = (req, res) => {
@@ -1700,19 +1619,6 @@ function parseChronicleLine(line) {
           return () => {}
         }
       }, 'jarvis-sphere: detail route')
-      ctx.effect(() => {
-        try {
-          const releaseShape = ctx.webServer.register({ kind: 'exact', path: SHAPE_PATH, handler: serveShape })
-          registered.shape = true
-          return () => {
-            registered.shape = false
-            if (typeof releaseShape === 'function') releaseShape()
-          }
-        } catch (err) {
-          warn('cannot register ' + SHAPE_PATH + ': ' + String(err && err.message))
-          return () => {}
-        }
-      }, 'jarvis-sphere: window shape route')
     }
     else {
       const dispose = attachRoute()
@@ -2522,7 +2428,6 @@ function parseChronicleLine(line) {
       }
     }
   }
-  void probeShell()
   try {
     if (typeof ctx.effect === 'function') ctx.effect(attachScene, 'jarvis-sphere: scene context')
     else {

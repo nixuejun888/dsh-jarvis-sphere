@@ -159,17 +159,6 @@ check('dispose releases the detail route', !routes.has('/dsh-jarvis/detail'), [.
   const layout = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=layout').body)
   check('the layout report is stored and shown', layout.items.some((item) => String(item.value).includes('div.main')), layout.items)
 }
-// --- 8. the window-shape route exists and refuses the wrong method ---
-{
-  const { ctx, routes } = makeCtx()
-  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c8'), backupDir: join(root, 'b8'), alerts: false })
-  const shape = routes.get('/dsh-jarvis/shape')
-  check('the window shape route is registered', !!shape, [...routes.keys()])
-  if (shape) {
-    const got = request(shape, '/dsh-jarvis/shape', 'GET')
-    check('the shape route refuses GET', got.status === 405, got.status)
-  }
-}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
