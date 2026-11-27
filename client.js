@@ -272,11 +272,6 @@ window.__ModuleLoader__.load({
       this.memoryRef = null
       this.memorySlotsCache = null
       this.memoryBornAt = 0
-      this.memoryPrevCounts = null
-      this.flyIns = []
-      this.lastErrors = -1
-      this.errPulseAt = 0
-      this.fpsAvg = 60
 
       this.immersive = false
       this.onKey = null
@@ -1150,15 +1145,11 @@ window.__ModuleLoader__.load({
       this.adoptPulses(Array.isArray(data.pulses) ? data.pulses : [])
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
-      if (nextMemory && Array.isArray(nextMemory.slots)) this.planMemoryFlyIn(nextMemory)
       if (nextMemoryTotal > prevMemoryTotal) {
         this.memoryBornAt = this.time
         this.burst(0.45)
         this.spawnArc(1.1)
       }
-      var errorNow = Number(this.state.counters.errors) || 0
-      if (this.lastErrors >= 0 && errorNow > this.lastErrors) this.errPulseAt = this.time
-      this.lastErrors = errorNow
       var tools = Number(this.state.counters.tools) || 0
       if (this.lastTools >= 0 && tools > this.lastTools) {
         var n = Math.min(3, tools - this.lastTools)
@@ -1201,27 +1192,6 @@ window.__ModuleLoader__.load({
       return out
     }
 
-    /** Compare the new memory slots with the previous frame and queue fly-ins. */
-    SphereEngine.prototype.planMemoryFlyIn = function (memory) {
-      var slots = this.memorySlots(memory)
-      var list = Array.isArray(memory.slots) ? memory.slots : []
-      var next = {}
-      for (var i = 0; i < list.length; i += 1) {
-        var entry = list[i]
-        if (!entry) continue
-        var key = String(entry.s)
-        var count = Math.max(1, Number(entry.n) || 1)
-        next[key] = count
-        if (!this.memoryPrevCounts) continue
-        var before = Number(this.memoryPrevCounts[key]) || 0
-        if (count > before && slots[i]) {
-          this.flyIns.push({ idx: slots[i].idx, t: slots[i].t, at: this.time, n: count - before })
-        }
-      }
-      this.memoryPrevCounts = next
-      if (this.flyIns.length > 12) this.flyIns = this.flyIns.slice(-12)
-    }
-
     /** 一次工具调用：冲击波 + 越球数据弧 + 火花 */
     SphereEngine.prototype.burst = function (strength) {
       this.waves.push({ r: 0.22, a: Math.min(1, strength), s: 1.5 + strength })
@@ -1258,7 +1228,6 @@ window.__ModuleLoader__.load({
       var dt = this.prev ? Math.min(0.05, (now - this.prev) / 1000) : 0.016
       this.prev = now
       this.time += dt
-      if (dt > 0) this.fpsAvg = this.fpsAvg * 0.92 + (1 / dt) * 0.08
       this.update(dt)
       this.draw()
     }
@@ -1588,45 +1557,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // ---- 新记忆飞入：一颗粒子从球心飞向它落脚的槽位 ----
-      if (this.flyIns.length) {
-        var keepFly = []
-        for (var fi = 0; fi < this.flyIns.length; fi += 1) {
-          var fly = this.flyIns[fi]
-          var flyAge = this.time - fly.at
-          if (flyAge > 1.4) continue
-          keepFly.push(fly)
-          var flyP = Math.min(1, Math.max(0, flyAge / 0.75))
-          var ease = 1 - Math.pow(1 - flyP, 3)
-          var slotX = px[fly.idx]
-          var slotY = py[fly.idx]
-          if (!isFinite(slotX) || !isFinite(slotY)) continue
-          var flyTint = fly.t === 'user'
-            ? (pal.amber || accent)
-            : fly.t === 'space'
-              ? (pal.violet || base)
-              : mix(pal.cyan || base, hi, 0.6)
-          for (var tr = 0; tr < 4; tr += 1) {
-            var tp = Math.max(0, ease - tr * 0.055)
-            var ax = cx + (slotX - cx) * tp
-            var ay = cy + (slotY - cy) * tp
-            var ta = (1 - flyP) * 0.55 * alphaScale * (1 - tr * 0.2)
-            ctx.fillStyle = rgba(flyTint, Math.max(0, ta * 0.6))
-            ctx.beginPath()
-            ctx.arc(ax, ay, 2.3 - tr * 0.32, 0, TAU)
-            ctx.fill()
-          }
-          if (flyP >= 1) {
-            var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
-            ctx.fillStyle = rgba(flyTint, 0.28 * sparkLeft * alphaScale)
-            ctx.beginPath()
-            ctx.arc(slotX, slotY, 3 + 7 * (1 - sparkLeft), 0, TAU)
-            ctx.fill()
-          }
-        }
-        this.flyIns = keepFly
-      }
-
       // ---- 文档刻度环：文档归档再多，也只是环上的刻度更密更亮 ----
       var docTicks = memory && memory.ok && Array.isArray(memory.docTicks) ? memory.docTicks : null
       if (docTicks && docTicks.length) {
@@ -1656,28 +1586,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // ---- 今日年轮：赤道一圈小点，点数 = 今天完成的回合数 ----
-      var turnsToday = this.chronicle ? Number(this.chronicle.todayTurns) || 0 : 0
-      if (turnsToday > 0) {
-        var dots = Math.min(72, turnsToday)
-        var ringR2 = R * 0.90
-        var tilt2 = -0.18
-        var ct2 = Math.cos(tilt2)
-        var st2 = Math.sin(tilt2)
-        for (var d2 = 0; d2 < dots; d2 += 1) {
-          var ang2 = (d2 / dots) * TAU - Math.PI / 2
-          var ex2 = Math.cos(ang2) * ringR2
-          var ey2 = Math.sin(ang2) * ringR2 * 0.30
-          var ddx = ex2 * ct2 - ey2 * st2
-          var ddy = ex2 * st2 + ey2 * ct2
-          var depth2 = (Math.sin(ang2) + 1) / 2
-          ctx.fillStyle = rgba(mix(base, hi, 0.45), (0.04 + 0.10 * depth2) * alphaScale)
-          ctx.beginPath()
-          ctx.arc(cx + ddx, cy + ddy, 0.8 + 0.8 * depth2, 0, TAU)
-          ctx.fill()
-        }
-      }
-
       // ---- 工具事件：一圈粒子爆开（不再画弧线） ----
       for (var wi = 0; wi < this.waves.length; wi++) {
         var wave = this.waves[wi]
@@ -1689,31 +1597,11 @@ window.__ModuleLoader__.load({
           var bJitter = 1 + (bh - 0.5) * 0.16
           var bx = cx + Math.cos(bAng) * wr * bJitter
           var by = cy + Math.sin(bAng) * wr * bJitter * 0.86
-          var bAlpha = wave.a * (0.30 - 0.18 * bh) * alphaScale
+          var bAlpha = wave.a * (0.55 - 0.35 * bh) * alphaScale
           ctx.fillStyle = rgba(bh > 0.6 ? accent : hi, Math.max(0, bAlpha))
           ctx.beginPath()
-          ctx.arc(bx, by, 1.1 + 1.5 * (1 - bh), 0, TAU)
+          ctx.arc(bx, by, 1.4 + 2.2 * (1 - bh), 0, TAU)
           ctx.fill()
-        }
-      }
-
-      // ---- 下一个定时任务：点链倒计时（剩余越少，亮点越少） ----
-      var dueAt = this.health && this.health.nextDueAt ? Date.parse(this.health.nextDueAt) : 0
-      if (dueAt) {
-        var remainMs = dueAt - Date.now()
-        if (remainMs > 0) {
-          var frac = Math.max(0, Math.min(1, remainMs / (60 * 60000)))
-          var lit = Math.round(frac * 20)
-          var chainStart = -Math.PI * 0.78
-          var chainSpan = Math.PI * 0.56
-          for (var q = 0; q < 20; q += 1) {
-            var aa2 = chainStart + (q / 19) * chainSpan
-            var on = q < lit
-            ctx.fillStyle = rgba(on ? accent : base, (on ? 0.16 : 0.05) * alphaScale)
-            ctx.beginPath()
-            ctx.arc(cx + Math.cos(aa2) * R * 1.10, cy + Math.sin(aa2) * R * 1.10, on ? 1.2 : 0.8, 0, TAU)
-            ctx.fill()
-          }
         }
       }
 
@@ -1785,11 +1673,11 @@ window.__ModuleLoader__.load({
         var band = 30
         var sg = ctx.createLinearGradient(0, scanY - band, 0, scanY + band)
         sg.addColorStop(0, rgba(base, 0))
-        sg.addColorStop(0.5, rgba(base, (0.008 + 0.016 * lit) * alphaScale))
+        sg.addColorStop(0.5, rgba(base, (0.022 + 0.045 * lit) * alphaScale))
         sg.addColorStop(1, rgba(base, 0))
         ctx.fillStyle = sg
         ctx.fillRect(cx - R, scanY - band, R * 2, band * 2)
-        ctx.strokeStyle = rgba(hi, (0.016 + 0.024 * lit) * alphaScale)
+        ctx.strokeStyle = rgba(hi, (0.045 + 0.07 * lit) * alphaScale)
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.moveTo(cx - R, scanY)
@@ -1835,7 +1723,7 @@ window.__ModuleLoader__.load({
           ctx.save()
           ctx.setTransform(1, 0, 0, 1, 0, 0)
           ctx.globalCompositeOperation = 'lighter'
-          ctx.globalAlpha = 0.30 * Math.min(1, alphaScale * 1.2)
+          ctx.globalAlpha = 0.48 * Math.min(1, alphaScale * 1.2)
           ctx.drawImage(bc, 0, 0, this.canvas.width, this.canvas.height)
           ctx.restore()
         }
@@ -1897,8 +1785,7 @@ window.__ModuleLoader__.load({
       var boost = 1 + 0.9 * lit
       var health = this.health || {}
       var memory = Number(health.memoryRatio) || 0
-        var fps = this.fpsAvg || 60
-        var COUNT = fps < 28 ? 140 : 260
+      var COUNT = 260
       ctx.save()
       ctx.globalCompositeOperation = 'lighter'
       for (var i = 0; i < COUNT; i += 1) {
@@ -1918,16 +1805,13 @@ window.__ModuleLoader__.load({
         var depth = (Math.sin(ang) + 1) / 2
         var size = (0.7 + 2.1 * h2) * (0.5 + 0.5 * depth)
         var twinkle = 0.55 + 0.45 * Math.sin(t * (1.1 + h3 * 2.1) + i * 0.7)
-        var a = (0.08 + 0.30 * depth) * twinkle * alpha * (0.7 + 0.6 * lit + 0.12 * (this.errPulseAt ? Math.max(0, 1 - (this.time - this.errPulseAt) / 1.2) : 0))
-        var errPulse = this.errPulseAt ? Math.max(0, 1 - (this.time - this.errPulseAt) / 1.2) : 0
-      var warm = (Number(health.contextRatio) || 0) > 0.85 && h3 > 0.8
-        var tint = errPulse > 0.4
-          ? (this.alert || accent)
-          : h1 > 0.90
-            ? accent
-            : warm
-              ? (this.alert || accent)
-              : mix(base, hi, 0.18 + 0.45 * lit)
+        var a = (0.08 + 0.30 * depth) * twinkle * alpha * (0.7 + 0.6 * lit)
+        var warm = (Number(health.contextRatio) || 0) > 0.85 && h3 > 0.8
+        var tint = h1 > 0.90
+          ? accent
+          : warm
+            ? (this.alert || accent)
+            : mix(base, hi, 0.18 + 0.45 * lit)
         ctx.fillStyle = rgba(tint, a * 0.14)
         ctx.beginPath()
         ctx.arc(px, py, size * 2.7, 0, TAU)
@@ -1952,8 +1836,7 @@ window.__ModuleLoader__.load({
         }
       }
       // far dust: tiny, faint, slow, adds depth behind the orbit ring
-      var farCount = (this.fpsAvg || 60) < 28 ? 50 : 110
-      for (var fd = 0; fd < farCount; fd += 1) {
+      for (var fd = 0; fd < 110; fd += 1) {
         var f1 = (fd * 0.7548776662) % 1
         var f2 = (fd * 0.5698402910) % 1
         var fRad = R * (1.42 + 0.55 * f1)
@@ -2247,5 +2130,6 @@ window.__ModuleLoader__.load({
     }
   },
 })
+
 
 
