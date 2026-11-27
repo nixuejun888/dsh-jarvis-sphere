@@ -91,12 +91,12 @@ function byId(report, id) {
 // --- 1. a healthy host reports ok everywhere and the doctor renders ---
 {
   const { ctx, routes, registered } = makeCtx()
-  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, chronicle: true })
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, chronicle: true, backup: false })
   const report = state(routes)?.diagnostics
   check('diagnostics are in the snapshot', !!report && Array.isArray(report.checks), report?.checks?.length)
   check('healthy host reports ok', report?.status === 'ok', report?.status)
   check('every check carries id + status + detail', report.checks.every((c) => c.id && c.status && c.detail), report.checks.map((c) => c.id))
-  check('the seven expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
+  check('the eight expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools', 'backup'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
   check('route check names the served path', /\/dsh-jarvis\/state/u.test(byId(report, 'route')?.detail || ''), byId(report, 'route')?.detail)
 
   const doctor = registered.find((definition) => definition.name === 'jarvis_doctor')
@@ -187,6 +187,15 @@ function byId(report, id) {
   const partialReport = state(partial.routes)?.diagnostics
   check('one refused tool reports degraded', byId(partialReport, 'tools')?.status === 'degraded', byId(partialReport, 'tools'))
   check('the refused tool is named', /doctor missing/u.test(byId(partialReport, 'tools')?.detail || ''), byId(partialReport, 'tools')?.detail)
+}
+// --- 8. an empty backup directory is degraded until the first archive ---
+{
+  const emptyBackups = join(root, 'no-backups-yet')
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: emptyBackups })
+  const report = state(routes)?.diagnostics
+  check('missing archive degrades the backup channel', byId(report, 'backup')?.status === 'degraded', byId(report, 'backup'))
+  check('backup advice names the action', /jarvis_backup create/u.test(byId(report, 'backup')?.detail || ''), byId(report, 'backup')?.detail)
 }
 rmSync(root, { recursive: true, force: true })
 

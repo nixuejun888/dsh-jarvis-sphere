@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { registerKeeper } from './keeper.js'
+import { backupStatus, collectSources, createBackup, restorePlan, verifyBackup } from './backup.js'
 
 /** Tunables the row's `config` may override. */
 const DEFAULTS = {
@@ -40,6 +41,12 @@ const DEFAULTS = {
   chronicle: true,
   /** Chronicle directory; empty uses `~/.dsh/jarvis-sphere`. */
   chronicleDir: '',
+  /** One-command archive of memory, chronicle, persona and config. */
+  backup: true,
+  /** Archive directory; empty uses ~/.dsh/jarvis-sphere/backups. */
+  backupDir: '',
+  /** Archives kept before the oldest is pruned. */
+  backupKeep: 7,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -542,7 +549,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -649,9 +656,9 @@ function parseChronicleLine(line) {
    * Self-check: every subsystem the plugin depends on, as ok / degraded / fail.
    * It only reads; the doctor tool and the HUD both consume this one report.
    */
-  function diagnose() {
+  function diagnose(force) {
     const now = Date.now()
-    if (diagCache.value && now - diagCache.at < 5000) return diagCache.value
+    if (!force && diagCache.value && now - diagCache.at < 5000) return diagCache.value
     const checks = []
     const add = (id, status, detail) => checks.push({ id, status, detail })
 
@@ -729,12 +736,25 @@ function parseChronicleLine(line) {
       { name: 'keeper', ok: registered.keeper, disabled: cfg.keeper === false },
       { name: 'chronicle', ok: registered.chronicleTool, disabled: cfg.chronicle === false },
       { name: 'doctor', ok: registered.doctor, disabled: false },
+      { name: 'backup', ok: registered.backup, disabled: cfg.backup === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
     add('tools', toolStatus,
       toolWanted.map((tool) => tool.name + ' ' + (tool.ok ? 'on' : tool.disabled ? 'off' : 'missing')).join(' · '))
 
+    if (cfg.backup === false) {
+      add('backup', 'skip', 'turned off by config')
+    } else {
+      const status = backupReport()
+      if (!status.latest) {
+        add('backup', 'degraded', 'no archive yet under ' + backupDir + '; run jarvis_backup create')
+      } else if (status.ageDays > 14) {
+        add('backup', 'degraded', 'newest archive is ' + status.ageDays + ' days old (' + status.latest + ')')
+      } else {
+        add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
+      }
+    }
     const order = { fail: 2, degraded: 1, ok: 0, skip: -1 }
     let worst = 'ok'
     for (const check of checks) if (order[check.status] > order[worst]) worst = check.status
@@ -758,6 +778,21 @@ function parseChronicleLine(line) {
     }
   }
 
+  /** Where archives live, and the sources one archive captures. */
+  const backupDir = String(cfg.backupDir || '').trim() || join(homedir(), '.dsh', 'jarvis-sphere', 'backups')
+  const backupSources = () => {
+    const personaFile = String(cfg.personaFile || '').trim() || join(HERE, 'persona.md')
+    return collectSources({
+      memoryRoot: resolveMemoryRoot(),
+      chronicleFile: chronicleFile,
+      personaFile,
+      pluginDir: HERE,
+    })
+  }
+  const backupReport = () => {
+    const status = backupStatus(backupDir)
+    return { ok: true, dir: backupDir, ...status }
+  }
   /** Recent chronicle lines, newest first, for the read-only tool. */
   function chronicleLines(limit) {
     const lines = readTailLines(chronicleFile, limit)
@@ -865,7 +900,7 @@ function parseChronicleLine(line) {
       persona: { name: 'JARVIS', active: personaOn, chars: personaText.length, source: persona.source, version: personaVersion },
       health: health(),
       chronicle: chronicleSummary(),
-      diagnostics: diagnose(),
+      diagnostics: diagnose(false),
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -1364,6 +1399,95 @@ function parseChronicleLine(line) {
   }
 
   /** Read-only doctor: same report as the snapshot, plus one fix per problem. */
+  /** One-command archive tool: status / create / verify. Restore stays manual. */
+  const attachBackup = () => {
+    if (cfg.backup === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const render = (value) => {
+      const lines = []
+      if (value.action === 'create') {
+        if (!value.ok) return '备份失败：' + String(value.reason || 'unknown')
+        lines.push('已归档 ' + value.manifest.totals.files + ' 个文件 / ' + Math.round(value.manifest.totals.bytes / 1024) + ' KB → ' + value.dir)
+        if (value.manifest.totals.failed) lines.push('  有 ' + value.manifest.totals.failed + ' 个文件复制失败，见 manifest')
+        if (value.pruned && value.pruned.length) lines.push('  轮换删除：' + value.pruned.join(', '))
+        return lines.join('\n')
+      }
+      if (value.action === 'verify') {
+        if (!value.ok && value.reason) return '校验失败：' + value.reason
+        lines.push('归档校验 ' + (value.ok ? '通过' : '未通过') + '：' + value.id + '（' + value.checked + ' 个文件）')
+        for (const broken of value.broken || []) lines.push('  损坏/缺失：' + broken.label)
+        if (value.ok && value.dir) lines.push(restorePlan(value.dir, resolveMemoryRoot(), chronicleFile, HERE))
+        return lines.join('\n')
+      }
+      lines.push('记忆地基：' + backupDir)
+      lines.push(value.latest ? '最新归档 ' + value.latest + ' · ' + (value.totals ? value.totals.files + ' 文件 / ' + Math.round(value.totals.bytes / 1024) + ' KB' : '无清单') + ' · ' + (value.ageDays < 0 ? '时间未知' : value.ageDays + ' 天前') + ' · 共 ' + value.count + ' 份' : '还没有归档；调 jarvis_backup action=create 生成第一份')
+      lines.push('恢复是手工步骤（运行中的 Mnemon 会覆盖自动回灌），先 verify 再按清单复制，然后重启 DSH。')
+      return lines.join('\n')
+    }
+    const definition = {
+      name: 'jarvis_backup',
+      description:
+        'Memory foundation for this machine: list archive status, create one archive of the Mnemon memory, documents, '
+        + 'chronicle, persona and plugin config, or verify an archive by re-hashing every file. It never restores: '
+        + 'restore stays a manual copy because a running Mnemon owns those files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['status', 'create', 'verify'], description: 'Default status.' },
+          id: { type: 'string', description: 'Archive directory name for verify; empty uses the newest.' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 60000,
+      execute: async (args) => {
+        const action = String((args && args.action) || 'status')
+        if (action === 'create') {
+          const result = createBackup(backupDir, backupSources(), { keep: Number(cfg.backupKeep) || 7 })
+          return { action: 'create', dir: backupDir, ...result }
+        }
+        if (action === 'verify') {
+          const id = String((args && args.id) || '')
+          return { action: 'verify', ...verifyBackup(backupDir, id) }
+        }
+        return { action: 'status', ...backupReport() }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.backup = true
+      return () => {
+        registered.backup = false
+        try {
+          release()
+        } catch (err) {
+          warn('backup tool release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_backup: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachBackup, 'jarvis-sphere: backup tool')
+    else {
+      const dispose = attachBackup()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the backup tool: ' + String(err && err.message))
+  }
   const attachDoctor = () => {
     let tools = null
     try {
@@ -1380,6 +1504,7 @@ function parseChronicleLine(line) {
       services: '缺服务说明这个 profile 的组合被改过，检查插件行是否被停用',
       caches: 'schedule 读取卡住，10 秒后会自动重试；持续出现说明服务不响应',
       tools: '缺工具说明 tools 服务不可用，检查插件行与 profile 组合',
+      backup: '调 jarvis_backup action=create 生成归档；记忆、编年史、人格都会进去',
     }
     const render = (value) => {
       const lines = ['JARVIS 自检（只读）· ' + String(value && value.status ? value.status : 'unknown').toUpperCase()]
@@ -1404,7 +1529,7 @@ function parseChronicleLine(line) {
         render: (_args, value) => [{ type: 'text', text: render(value) }],
       },
       timeoutMs: 15000,
-      execute: async () => diagnose(),
+      execute: async () => diagnose(true),
     }
     try {
       const release = tools.register(definition)

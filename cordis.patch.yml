@@ -21,5 +21,8 @@
         memorySlots: 0
         keeper: true
         chronicle: true
+        backup: true
+        # backupDir: 'C:\\绝对路径'
+        backupKeep: 7
         # chronicleDir: 'C:\\绝对路径'
 

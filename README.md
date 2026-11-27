@@ -128,6 +128,17 @@ HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
 
 另外加了 `test/import-smoke.mjs`：除了用当前 Node 导入入口模块，还会用**宿主自带的 Node** 再导一次——
 这次就是靠它之外的一次真机加载抓到了 `import { W_OK } from 'node:fs'`（PATH 上的 Node 22 容忍、宿主 Node 24 直接拒绝激活）这类只在宿主上才炸的问题。
+## 记忆地基：`jarvis_backup`
+
+一条命令把「让 JARVIS 成为 JARVIS」的东西打包：Mnemon 运行库（memories.json / USER.md / MEMORY.md）、文档索引与正文、编年史、`persona.md`、插件配置。
+
+- `action=status`（默认）：归档目录、最新一份的时间与体积、总份数；
+- `action=create`：生成 `~/.dsh/jarvis-sphere/backups/jarvis-<时间戳>/`，内含 `manifest.json`（每个文件的字节数与 sha256），默认只留最近 7 份（`backupKeep`）；
+- `action=verify`：**逐文件重新哈希**，损坏或缺失会点名；通过后打印恢复清单；
+- **不做自动恢复**：运行中的 Mnemon 持有这些文件，自动回灌会被它覆盖。`verify` 给出的是校验过的复制清单，复制后重启 DSH 生效；
+- 医生（`jarvis_doctor`）多一项 `backup` 检查：没有归档或最新一份超过 14 天 → `DEGRADED`，并直接告诉你跑 `create`。
+
+实测：第一份归档 79 个文件 / 561 KB（记忆 15 条 + 文档 70 篇 + 编年史 + 人格 + 配置）。
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -201,6 +212,9 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         memorySlots: 0     # 记忆槽位数；0 = 跟随 nodeCount（上限 1400）
         keeper: true       # 注册只读审计工具 jarvis_memory_review
         chronicle: true    # 每个回合写一行编年史
+        backup: true       # 记忆地基归档（jarvis_backup）
+        # backupDir: 'C:\绝对路径\'   # 归档目录；空 = ~/.dsh/jarvis-sphere/backups
+        backupKeep: 7      # 保留几份
         # chronicleDir: 'C:\绝对路径\'   # 编年史目录；空 = ~/.dsh/jarvis-sphere
 ```
 
@@ -223,8 +237,9 @@ node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存�
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
-node test/doctor-smoke.mjs  # 23/23  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
+node test/doctor-smoke.mjs  # 25/25  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
+node test/backup-smoke.mjs  # 21/21  归档：源发现、manifest 哈希、篡改/缺失检出、轮换、状态
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
