@@ -31,6 +31,21 @@ window.__ModuleLoader__.load({
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
       'html.jvs-stage [data-jvs-side]{opacity:0.62;transition:opacity 200ms ease;}',
       'html.jvs-stage [data-jvs-side]:hover{opacity:1;}',
+      'html.jvs-full body{background:#05070c !important;}',
+      'html.jvs-full [data-jvs-side]{position:fixed !important;left:0;top:0;bottom:0;width:min(22vw,300px) !important;height:auto !important;z-index:70;background:rgba(5,8,14,0.97);border-right:1px solid rgba(120,200,255,0.15);transform:translateX(-101%);transition:transform 180ms ease;overflow-y:auto !important;}',
+      'html.jvs-full [data-jvs-side][data-jvs-open]{transform:none;}',
+      'html.jvs-full [data-jvs-rail]{position:fixed !important;right:0;top:0;bottom:0;left:auto !important;width:min(24vw,340px) !important;max-height:none !important;height:auto !important;z-index:70;background:rgba(5,8,14,0.97);border-left:1px solid rgba(120,200,255,0.15);transform:translateX(101%);transition:transform 180ms ease;overflow-y:auto !important;border-radius:0;box-shadow:none;}',
+      'html.jvs-full [data-jvs-rail][data-jvs-open]{transform:none;}',
+      'html.jvs-full [data-jvs-chat]{position:fixed !important;left:50% !important;transform:translateX(-50%) !important;bottom:14px !important;top:auto !important;width:min(920px,94vw) !important;height:36vh !important;z-index:40 !important;border-radius:18px;border:1px solid rgba(120,200,255,0.22);background:rgba(6,9,16,0.9);box-shadow:0 24px 60px rgba(0,0,0,0.6);backdrop-filter:blur(12px);overflow-y:auto !important;}',
+      'html.jvs-full [data-jvs-chat][data-jvs-collapsed]{height:96px !important;}',
+      '.jvs-drawer-btn{position:fixed;top:50%;transform:translateY(-50%);z-index:80;width:26px;height:54px;border-radius:8px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:14px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
+      'html.jvs-full .jvs-drawer-btn{display:block;}',
+      '.jvs-drawer-btn.jvs-left{left:0;border-radius:0 8px 8px 0;}',
+      '.jvs-drawer-btn.jvs-right{right:0;border-radius:8px 0 0 8px;}',
+      '.jvs-chat-toggle{position:fixed;right:16px;bottom:calc(36vh + 22px);z-index:80;padding:3px 8px;border-radius:8px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
+      'html.jvs-full .jvs-chat-toggle{display:block;}',
+      '.jvs-mode-exit{position:fixed;top:10px;right:14px;z-index:80;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
+      'html.jvs-full .jvs-mode-exit,html.jvs-stage .jvs-mode-exit{display:block;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
@@ -240,7 +255,7 @@ window.__ModuleLoader__.load({
       }
       this.cfg = {
         enabled: true, nodeCount: 460, intensity: 1, opacity: 1,
-        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0, gauge: 'glow', stage: false,
+        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0, gauge: 'glow', stage: false, full: false,
       }
       this.lastTools = -1
       this.dark = true
@@ -385,9 +400,12 @@ window.__ModuleLoader__.load({
       var cfg = this.cfg || {}
       var cx = w / 2 + (Number(cfg.offsetX) || 0)
       var cy = hgt / 2 + (Number(cfg.offsetY) || 0)
+      var fullGeo = this.fullGeometry ? this.fullGeometry() : null
+      if (fullGeo) return fullGeo
       var stageGeo = this.stageGeometry ? this.stageGeometry() : null
       if (stageGeo) return stageGeo
-      var stageGeo = this.stageGeometry ? this.stageGeometry() : null
+      var fullGeo = this.fullGeometry ? this.fullGeometry() : null
+      var stageGeo = fullGeo || (this.stageGeometry ? this.stageGeometry() : null)
       var R = stageGeo ? stageGeo.R : Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
       if (stageGeo) {
         cx = stageGeo.cx
@@ -506,6 +524,12 @@ window.__ModuleLoader__.load({
         /* never steal a click that belongs to the page: selecting text, pressing
            a button, focusing the composer or following a link stays untouched */
         if (!self.cfg || !self.cfg.enabled || Number(self.cfg.opacity) <= 0.001) return
+        /* in the full stage a click dismisses an open drawer before opening the panel */
+        var openedDrawer = document.querySelector('[data-jvs-open]')
+        if (openedDrawer && self.full) {
+          openedDrawer.removeAttribute('data-jvs-open')
+          return
+        }
         var selection = ''
         try {
           selection = String((window.getSelection() || {}).toString() || '')
@@ -604,6 +628,151 @@ window.__ModuleLoader__.load({
       this.onResize()
     }
 
+
+    /** Full (档 3): the sphere is the whole screen, the conversation docks below. */
+    SphereEngine.prototype.setFull = function (on) {
+      this.full = !!on
+      try {
+        document.documentElement.classList.toggle('jvs-full', this.full)
+        window.localStorage.setItem('jarvis:full', this.full ? '1' : '0')
+      } catch (err) {
+        void err
+      }
+      if (this.full) {
+        if (!this.stage) this.liftChatCard()
+        this.ensureDrawers()
+      } else {
+        this.removeDrawers()
+        if (!this.stage) this.restoreChatCard()
+      }
+      this.onResize()
+    }
+
+    /** The two edge buttons and the collapse button exist only while full is on. */
+    SphereEngine.prototype.ensureDrawers = function () {
+      var self = this
+      if (!document.querySelector('.jvs-drawer-btn.jvs-left')) {
+        var left = document.createElement('button')
+        left.type = 'button'
+        left.className = 'jvs-drawer-btn jvs-left'
+        left.setAttribute('aria-label', '会话列表')
+        left.textContent = '☰'
+        left.onclick = function (event) {
+          event.stopPropagation()
+          var side = document.querySelector('[data-jvs-side]')
+          if (!side) return
+          if (side.hasAttribute('data-jvs-open')) side.removeAttribute('data-jvs-open')
+          else side.setAttribute('data-jvs-open', '1')
+        }
+        document.body.appendChild(left)
+      }
+      if (!document.querySelector('.jvs-drawer-btn.jvs-right')) {
+        var right = document.createElement('button')
+        right.type = 'button'
+        right.className = 'jvs-drawer-btn jvs-right'
+        right.setAttribute('aria-label', '侧边面板')
+        right.textContent = '▤'
+        right.onclick = function (event) {
+          event.stopPropagation()
+          var rail = document.querySelector('[data-jvs-rail]')
+          if (!rail) return
+          if (rail.hasAttribute('data-jvs-open')) rail.removeAttribute('data-jvs-open')
+          else rail.setAttribute('data-jvs-open', '1')
+        }
+        document.body.appendChild(right)
+      }
+      if (!document.querySelector('.jvs-chat-toggle')) {
+        var toggle = document.createElement('button')
+        toggle.type = 'button'
+        toggle.className = 'jvs-chat-toggle'
+        toggle.textContent = '收起对话'
+        toggle.onclick = function (event) {
+          event.stopPropagation()
+          var chat = document.querySelector('[data-jvs-chat]')
+          if (!chat) return
+          var collapsed = chat.hasAttribute('data-jvs-collapsed')
+          if (collapsed) chat.removeAttribute('data-jvs-collapsed')
+          else chat.setAttribute('data-jvs-collapsed', '1')
+          toggle.textContent = collapsed ? '收起对话' : '展开对话'
+        }
+        document.body.appendChild(toggle)
+      }
+      if (!document.querySelector('.jvs-mode-exit')) {
+        var exit = document.createElement('button')
+        exit.type = 'button'
+        exit.className = 'jvs-mode-exit'
+        exit.textContent = '退出球模式'
+        exit.onclick = function (event) {
+          event.stopPropagation()
+          self.setFull(false)
+          self.setStage(false)
+        }
+        document.body.appendChild(exit)
+      }
+      this.markRegions()
+      if (!this.drawerClick) {
+        this.drawerClick = function (event) {
+          if (!self.full) return
+          var target = event.target
+          if (target && target.closest && (target.closest('[data-jvs-open]') || target.closest('.jvs-drawer-btn'))) return
+          var opened = document.querySelectorAll('[data-jvs-open]')
+          for (var i = 0; i < opened.length; i += 1) opened[i].removeAttribute('data-jvs-open')
+        }
+        window.addEventListener('click', this.drawerClick, true)
+      }
+    }
+
+    SphereEngine.prototype.markRegions = function () {
+      var frame = null
+      var rail = document.querySelector('[data-rightbar-col]')
+      if (rail) frame = rail.parentElement
+      if (frame && frame.children) {
+        for (var i = 0; i < frame.children.length; i += 1) {
+          var child = frame.children[i]
+          if (child.hasAttribute('data-rightbar-col')) child.setAttribute('data-jvs-rail', '1')
+        }
+      }
+      var chat = this.chatRegion || (this.findChatRegion() || {}).node
+      if (chat) chat.setAttribute('data-jvs-chat', '1')
+      var side = this.sideRegion
+      if (!side && frame && frame.children && frame.children.length) {
+        for (var j = 0; j < frame.children.length; j += 1) {
+          var candidate = frame.children[j]
+          var rect = candidate.getBoundingClientRect()
+          if (rect.width > 100 && rect.width < window.innerWidth * 0.4 && rect.height > window.innerHeight * 0.5
+            && !candidate.hasAttribute('data-jvs-chat') && !candidate.hasAttribute('data-jvs-rail')) {
+            side = candidate
+            break
+          }
+        }
+      }
+      if (side) side.setAttribute('data-jvs-side', '1')
+    }
+
+    SphereEngine.prototype.removeDrawers = function () {
+      if (this.drawerClick) {
+        window.removeEventListener('click', this.drawerClick, true)
+        this.drawerClick = null
+      }
+      var names = ['.jvs-drawer-btn', '.jvs-chat-toggle', '.jvs-mode-exit']
+      for (var i = 0; i < names.length; i += 1) {
+        var nodes = document.querySelectorAll(names[i])
+        for (var j = 0; j < nodes.length; j += 1) {
+          if (nodes[j].parentNode) nodes[j].parentNode.removeChild(nodes[j])
+        }
+      }
+      var opened = document.querySelectorAll('[data-jvs-open]')
+      for (var k = 0; k < opened.length; k += 1) opened[k].removeAttribute('data-jvs-open')
+      var collapsed = document.querySelectorAll('[data-jvs-collapsed]')
+      for (var m = 0; m < collapsed.length; m += 1) collapsed[m].removeAttribute('data-jvs-collapsed')
+    }
+
+    SphereEngine.prototype.fullGeometry = function () {
+      var w = this.w || window.innerWidth
+      var hgt = this.h || window.innerHeight
+      if (!this.full) return null
+      return { cx: w * 0.5, cy: hgt * 0.36, R: Math.min(w, hgt) * 0.40 }
+    }
     /** Pick the conversation column: a tall, wide ancestor with a tall sibling. */
     SphereEngine.prototype.findChatRegion = function () {
       var w = window.innerWidth
@@ -768,10 +937,11 @@ window.__ModuleLoader__.load({
       this.onKey = function (event) {
         if (!event || !event.ctrlKey || !event.shiftKey) return
         var key = String(event.key || '').toLowerCase()
-        if (key !== 'j' && key !== 'k') return
+        if (key !== 'j' && key !== 'k' && key !== 'l') return
         event.preventDefault()
         if (key === 'j') self.setImmersive(!self.immersive)
-        else self.setStage(!self.stage)
+        else if (key === 'k') self.setStage(!self.stage)
+        else self.setFull(!self.full)
       }
       window.addEventListener('keydown', this.onKey, true)
       var saved = '0'
@@ -788,6 +958,13 @@ window.__ModuleLoader__.load({
         savedStage = '0'
       }
       if (savedStage === '1') this.setStage(true)
+      var savedFull = '0'
+      try {
+        savedFull = window.localStorage.getItem('jarvis:full') || '0'
+      } catch (err) {
+        savedFull = '0'
+      }
+      if (savedFull === '1') this.setFull(true)
     }
     SphereEngine.prototype.onResize = function () {
       var rect = this.host.getBoundingClientRect()
@@ -838,6 +1015,7 @@ window.__ModuleLoader__.load({
       if (typeof cfg.showHud === 'boolean') this.cfg.showHud = cfg.showHud
       if (typeof cfg.gauge === 'string') this.cfg.gauge = cfg.gauge
       if (typeof cfg.stage === 'boolean' && cfg.stage !== !!this.stage) this.setStage(cfg.stage)
+      if (typeof cfg.full === 'boolean' && cfg.full !== !!this.full) this.setFull(cfg.full)
       if (typeof cfg.glow === 'boolean') this.cfg.glow = cfg.glow
       if (typeof cfg.color === 'string') this.cfg.color = cfg.color
       if (typeof cfg.offsetX === 'number') this.cfg.offsetX = cfg.offsetX
@@ -1126,7 +1304,8 @@ window.__ModuleLoader__.load({
 
       var cx = w / 2 + cfg.offsetX
       var cy = hgt / 2 + cfg.offsetY
-      var stageGeo = this.stageGeometry ? this.stageGeometry() : null
+      var fullGeo = this.fullGeometry ? this.fullGeometry() : null
+      var stageGeo = fullGeo || (this.stageGeometry ? this.stageGeometry() : null)
       var R = stageGeo ? stageGeo.R : Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
       if (stageGeo) {
         cx = stageGeo.cx
@@ -1862,7 +2041,6 @@ window.__ModuleLoader__.load({
     }
   },
 })
-
 
 
 

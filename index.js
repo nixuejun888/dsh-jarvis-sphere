@@ -65,6 +65,8 @@ const DEFAULTS = {
   scene: true,
   /** Stage (档 2): the sphere is the main screen and the conversation floats beside it. */
   stage: false,
+  /** Full (档 3): only the sphere; the conversation docks at the bottom, panels slide in. */
+  full: false,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -1306,6 +1308,7 @@ function parseChronicleLine(line) {
         offsetY: cfg.offsetY,
         gauge: cfg.gauge,
         stage: cfg.stage === true,
+        full: cfg.full === true,
       },
     }
   }
@@ -2264,7 +2267,7 @@ function parseChronicleLine(line) {
     const definition = {
       name: 'jarvis_report',
       description:
-        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the ten-channel '
+        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the eleven-channel '
         + 'self-check, backup status and open alerts, written as Markdown under the reports directory. It only writes the '
         + 'report file; it never touches memory.',
       parameters: {
@@ -2815,4 +2818,3 @@ function parseChronicleLine(line) {
     activeTools.clear()
   }
 }
-
