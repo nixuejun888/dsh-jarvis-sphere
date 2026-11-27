@@ -1216,7 +1216,8 @@ window.__ModuleLoader__.load({
 
     /** Start a comet drawn exactly like the memory dots, only bigger. */
     SphereEngine.prototype.startComet = function () {
-      this.comet = { at: this.time, dur: 2.2 }
+      var nowMs = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+      this.comet = { at: nowMs, dur: 2200 }
       this.cometTrail = []
       this.cometEmbers = []
     }
@@ -1225,8 +1226,10 @@ window.__ModuleLoader__.load({
     SphereEngine.prototype.drawComet = function (ctx, cx, cy, R, base, accent, hi, alphaScale) {
       if (this.comet) {
         var c = this.comet
-        var age = this.time - c.at
-        var p = Math.min(1, age / c.dur)
+        var nowMs2 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+        var ageMs = nowMs2 - c.at
+        var age = ageMs / 1000
+        var p = Math.min(1, Math.max(0, ageMs / c.dur))
         var ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
         var sx = cx + R * 0.94
         var sy = cy + R * 1.28
@@ -1283,6 +1286,8 @@ window.__ModuleLoader__.load({
           ctx.fill()
         }
         this.cometEmbers = live
+        this.lastCometX = hx
+        this.lastCometY = hy
         var pulse = 0.85 + 0.15 * Math.sin(this.time * 9)
         var core = 4.6 * pulse
         var halo = core * 7.5
@@ -1304,15 +1309,17 @@ window.__ModuleLoader__.load({
         ctx.arc(hx, hy, core * 0.62, 0, TAU)
         ctx.fill()
         ctx.restore()
-        if (p >= 1) {
-          this.cometBurst = { at: this.time, x: cx, y: cy }
+        if (ageMs >= c.dur) {
+          this.cometBurst = { at: nowMs2, x: cx, y: cy }
           this.comet = null
           this.cometTrail = []
+          this.cometEmbers = []
         }
       }
       if (this.cometBurst) {
-        var bAge = this.time - this.cometBurst.at
-        if (bAge > 1.6) {
+        var nowMs3 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+        var bAge = (nowMs3 - this.cometBurst.at) / 1000
+        if (!isFinite(bAge) || bAge < 0 || bAge > 1.6) {
           this.cometBurst = null
         } else {
           var bx = this.cometBurst.x
@@ -1437,6 +1444,16 @@ window.__ModuleLoader__.load({
     }
 
     SphereEngine.prototype.update = function (dt) {
+      // 硬性兜底：彗星/爆炸按真实时钟超时清理，不依赖绘制路径
+      var wallNow = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+      if (this.comet && isFinite(this.comet.at) && wallNow - this.comet.at > this.comet.dur + 250) {
+        this.cometBurst = { at: wallNow, x: this.lastCometX || this.w / 2, y: this.lastCometY || this.h / 2 }
+        this.comet = null
+        this.cometTrail = []
+        this.cometEmbers = []
+      }
+      if (this.cometBurst && isFinite(this.cometBurst.at) && wallNow - this.cometBurst.at > 2200) this.cometBurst = null
+
       var s = this.state
       var cfg = this.cfg
       var target =
