@@ -227,6 +227,13 @@ window.__ModuleLoader__.load({
       this.dark = true
       this.blend = 'screen'
 
+      /* 记忆投影与人格标记：都由 Host 的快照驱动 */
+      this.memory = null
+      this.persona = null
+      this.memoryRef = null
+      this.memorySlotsCache = null
+      this.memoryBornAt = 0
+
       this.onResize = this.onResize.bind(this)
       this.frame = this.frame.bind(this)
 
@@ -426,6 +433,18 @@ window.__ModuleLoader__.load({
         counters: data.counters && typeof data.counters === 'object' ? data.counters : {},
         recent: Array.isArray(data.recent) ? data.recent : [],
       }
+      /* 记忆投影：条目自身永不离开 Host，这里只拿到 hash/类型/重要度/年龄 */
+      var nextMemory = data.memory && Array.isArray(data.memory.nodes) ? data.memory : null
+      var prevMemoryTotal = this.memory && this.memory.ok ? Number(this.memory.total) || 0 : 0
+      this.memory = nextMemory
+      this.persona = data.persona && typeof data.persona === 'object' ? data.persona : null
+      var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
+      /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
+      if (nextMemoryTotal > prevMemoryTotal) {
+        this.memoryBornAt = this.time
+        this.burst(0.45)
+        this.spawnArc(1.1)
+      }
       var tools = Number(this.state.counters.tools) || 0
       if (this.lastTools >= 0 && tools > this.lastTools) {
         var n = Math.min(3, tools - this.lastTools)
@@ -433,6 +452,37 @@ window.__ModuleLoader__.load({
       }
       this.lastTools = tools
       if (!prevRunning && busy) this.burst(0.35)
+    }
+
+    /** 一条记忆占一颗固定光点：hash 决定位置，重启后仍落在同一处 */
+    SphereEngine.prototype.memorySlots = function (memory) {
+      if (this.memoryRef === memory && this.memorySlotsCache) return this.memorySlotsCache
+      var total = this.nodes.length || 1
+      var used = {}
+      var out = []
+      for (var i = 0; i < memory.nodes.length; i++) {
+        var entry = memory.nodes[i]
+        if (!entry) continue
+        var slot = ((entry.k >>> 0) % total + total) % total
+        var guard = 0
+        while (used[slot] && guard < total) {
+          slot = (slot + 1) % total
+          guard++
+        }
+        if (used[slot]) break
+        used[slot] = 1
+        var type = entry.t === 'user' ? 'user' : entry.t === 'space' ? 'space' : entry.t === 'doc' ? 'doc' : 'memory'
+        out.push({
+          idx: slot,
+          t: type,
+          i: Number(entry.i) || 0,
+          a: Number(entry.a),
+          f: !!entry.f,
+        })
+      }
+      this.memoryRef = memory
+      this.memorySlotsCache = out
+      return out
     }
 
     /** 一次工具调用：冲击波 + 越球数据弧 + 火花 */
@@ -739,6 +789,50 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // ---- 记忆光点：每颗都是一条记忆（用户画像 / 工作记忆 / 记忆空间 / 文档） ----
+      var memory = this.memory
+      if (memory && memory.ok && Array.isArray(memory.nodes) && memory.nodes.length) {
+        var slots = this.memorySlots(memory)
+        var memPalette = {
+          user: pal.amber || accent,
+          /* 工作记忆是最多的一类：偏白的冷光，才不会和球壳的青线糊在一起 */
+          memory: mix(pal.cyan || base, hi, 0.6),
+          space: pal.violet || base,
+          doc: pal.green || base,
+        }
+        var born = this.memoryBornAt ? Math.max(0, 1 - (this.time - this.memoryBornAt) / 2.4) : 0
+        for (var mm = 0; mm < slots.length; mm++) {
+          var ms = slots[mm]
+          var mIdx = ms.idx
+          var mDepth = pz[mIdx]
+          var mImp = ms.i < 0 ? 0 : ms.i > 2 ? 2 : ms.i
+          // 旧记忆变暗但不熄灭：球上留下的都是真的记过的东西
+          var ageFade = isFinite(ms.a) && ms.a >= 0 ? Math.max(0.42, 1 - ms.a / 150) : 0.85
+          var tint = memPalette[ms.t] || base
+          var coreA = (0.34 + 0.62 * mDepth) * alphaScale * ageFade
+          if (coreA < 0.012) continue
+          var mx = px[mIdx]
+          var my = py[mIdx]
+          var breath = ms.f || born > 0 ? Math.sin(this.time * 3.1 + mm * 0.7) * 0.5 + 0.5 : 0.22
+          var twinkle = 0.78 + 0.22 * Math.sin(this.time * 2.2 + mm * 1.7)
+          var mSize = 2.0 + mImp * 1.2
+          var halo = mSize * (3.0 + 1.0 * breath + born * 2.4)
+          ctx.fillStyle = rgba(tint, coreA * (0.16 + 0.2 * breath + 0.34 * born) * twinkle)
+          ctx.beginPath()
+          ctx.arc(mx, my, halo, 0, TAU)
+          ctx.fill()
+          ctx.fillStyle = rgba(mix(tint, hi, 0.62), Math.min(1, coreA * 1.25))
+          ctx.beginPath()
+          ctx.arc(mx, my, mSize * 0.78, 0, TAU)
+          ctx.fill()
+          ctx.strokeStyle = rgba(tint, coreA * (mImp >= 2 ? 0.62 : 0.34))
+          ctx.lineWidth = mImp >= 2 ? 1 : 0.7
+          ctx.beginPath()
+          ctx.arc(mx, my, mSize * (1.75 + breath * 0.35), 0, TAU)
+          ctx.stroke()
+        }
+      }
+
       // ---- 工具冲击波 ----
       for (var wi = 0; wi < this.waves.length; wi++) {
         var wave = this.waves[wi]
@@ -934,10 +1028,22 @@ window.__ModuleLoader__.load({
       var s = this.state
       var tools = Number(s.counters.tools) || 0
       var turns = Number(s.counters.turns) || 0
-      var head = s.running ? 'ACTIVE' : 'STANDBY'
+      var memory = this.memory && this.memory.ok ? this.memory : null
+      var head = this.persona && this.persona.active ? 'JARVIS  ·  ' : ''
+      head += s.running ? 'ACTIVE' : 'STANDBY'
+      if (memory && memory.total > 0) head += '  ·  ' + memory.total + ' MEM'
       if (tools > 0) head += '  ·  ' + tools + ' TOOLS'
       if (turns > 0) head += '  ·  ' + turns + ' TURNS'
       var detail = s.activeTools.length ? String(s.activeTools[s.activeTools.length - 1]) : ''
+      if (!detail && memory && memory.ok) {
+        /* 没有工具在跑时，底下一行报记忆库存：用户画像 / 工作记忆 / 空间 / 文档 */
+        var parts = []
+        if (memory.user) parts.push(memory.user + ' USER')
+        if (memory.memory) parts.push(memory.memory + ' WORKING')
+        if (memory.spaces) parts.push(memory.spaces + ' SPACES')
+        if (memory.documents) parts.push(memory.documents + ' DOCS')
+        detail = parts.length ? 'MEMORY  ' + parts.join('  ·  ') : ''
+      }
 
       ctx.save()
       ctx.textAlign = 'center'

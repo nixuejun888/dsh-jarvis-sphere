@@ -2,10 +2,15 @@
  * Jarvis sphere — Host half.
  *
  * Keeps a tiny in-memory model of what the Harness is doing right now (which
- * agents run, how fast the model streams, which tools are executing) and
- * publishes it on one owner-only HTTP route. The Client half polls that route
- * and animates a neuron sphere from it. Nothing here reaches a model request.
+ * agents run, how fast the model streams, which tools are executing), projects
+ * the local memory store onto sphere nodes, and contributes a permanent JARVIS
+ * persona to every session's system prompt. The Client half polls one
+ * owner-only HTTP route and animates the sphere from that snapshot.
  */
+
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 /** Tunables the row's `config` may override. */
 const DEFAULTS = {
@@ -18,7 +23,38 @@ const DEFAULTS = {
   color: 'cyan',
   offsetX: 0,
   offsetY: 0,
+  /** Persistent character written into every session's system prompt. */
+  persona: true,
+  /** Overrides the built-in persona text. */
+  personaText: '',
+  /** Extra Mnemon storage roots to probe before the configured one. */
+  memoryDirs: [],
+  /** Upper bound on memory points painted on the sphere. */
+  maxMemoryNodes: 120,
 }
+
+/** System-prompt section that carries the persona; a global registration. */
+const PERSONA_SECTION = 'jarvis:persona'
+/** Sorted just after `deployment:persona-prefix` (0) and before plan policy (500). */
+const PERSONA_ORDER = 100
+
+/**
+ * The permanent character. It is prompt text, so it states precedence: current
+ * instructions, accuracy and tool rules always outrank the performance.
+ */
+const PERSONA_TEXT = [
+  '你是 JARVIS——常驻这台机器「全息神经元球」里的私人操作员，不是客服机器人。',
+  '说话：先给结论和能力边界（能可靠做／只能近似／做不了），再给一步到位的做法；短句、少寒暄、不谄媚、不堆感叹号。',
+  '做事：把交办的事当军令。先要最省事的输入，先出一张低成本小样确认方向；同一目标两次不收敛就承认并给替代路线，不硬做。',
+  '记忆即人格：球面上每一颗亮起的光点都是一条记忆。你会主动把重要的偏好、纠正、结论沉淀进去，并在回答里区分「我记得」（有来源）与「我不确定」（没来源），不编造记忆。',
+  '若用户的即时指令、准确性要求、安全规则或工具规则与人设冲突，前者一律优先；人设只在它们之上的语气与习惯里生效。',
+].join('\n')
+
+/** How long one memory projection is reused. */
+const MEMORY_REFRESH_MS = 3000
+/** Importance → rank used by the Client half for size and glow. */
+const IMPORTANCE_RANK = { critical: 2, normal: 1, low: 0 }
+
 
 /** Sliding window used for every rate. */
 const WINDOW_MS = 2500
@@ -43,6 +79,123 @@ function num(value, fallback) {
 
 function clamp(n, lo, hi) {
   return n < lo ? lo : n > hi ? hi : n
+}
+
+/** FNV-1a: one stable slot per memory entry, across restarts and sessions. */
+function hash32(text) {
+  const s = String(text || '')
+  let h = 2166136261
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return undefined
+  }
+}
+
+/** Where Mnemon keeps `runtime/`, `documents/` and `data/`. */
+function memoryRoots(ctx, cfg) {
+  const roots = []
+  const push = (value) => {
+    if (typeof value !== 'string' || !value) return
+    if (roots.indexOf(value) === -1) roots.push(value)
+  }
+  for (const dir of Array.isArray(cfg.memoryDirs) ? cfg.memoryDirs : []) push(dir)
+  try {
+    const configService = typeof ctx.get === 'function' ? ctx.get('config') : undefined
+    if (configService && typeof configService.resolveConfigByPackage === 'function') {
+      const synced = configService.resolveConfigByPackage('dsh-mnemon')
+      const value = synced && typeof synced.get === 'function' ? synced.get() : synced
+      const dir = value && typeof value === 'object' ? value.dataDir || (value.config && value.config.dataDir) : undefined
+      push(dir)
+    }
+  } catch (err) {
+    void err
+  }
+  push(join(homedir(), '.mnemon'))
+  return roots
+}
+
+/**
+ * Project the local memory store onto plain numbers the Client half can draw:
+ * one slot per runtime entry, plus the space and document counts. Entry text
+ * never leaves the Host — only its hash, target and importance do.
+ */
+function projectMemory(ctx, cfg, cache) {
+  const now = Date.now()
+  if (cache.value && now - cache.at < MEMORY_REFRESH_MS) return cache.value
+  cache.at = now
+
+  let root = ''
+  let runtime
+  for (const dir of memoryRoots(ctx, cfg)) {
+    const file = join(dir, 'runtime', 'memories.json')
+    if (!existsSync(file)) continue
+    root = dir
+    runtime = readJsonFile(file)
+    if (runtime) break
+  }
+  if (!root || !runtime || !Array.isArray(runtime.entries)) {
+    cache.value = { ok: false, nodes: [], total: 0 }
+    return cache.value
+  }
+
+  const nodes = []
+  const counts = { user: 0, memory: 0, critical: 0, fresh: 0 }
+  for (const entry of runtime.entries) {
+    if (!entry || typeof entry.content !== 'string' || !entry.content) continue
+    const target = entry.target === 'user' ? 'user' : 'memory'
+    counts[target] += 1
+    if (entry.importance === 'critical') counts.critical += 1
+    const stamp = Date.parse(entry.updated_at || entry.created_at || '')
+    const ageDays = Number.isFinite(stamp) ? Math.max(0, Math.round((now - stamp) / 86400000)) : -1
+    const fresh = Number.isFinite(stamp) && now - stamp < 86400000
+    if (fresh) counts.fresh += 1
+    nodes.push({
+      t: target,
+      i: IMPORTANCE_RANK[entry.importance] ?? 1,
+      a: ageDays,
+      f: fresh ? 1 : 0,
+      k: hash32(entry.content),
+    })
+  }
+
+  const bodies = readJsonFile(join(root, 'data', '.dsh-memory-bodies.json'))
+  const spaces = bodies && Array.isArray(bodies.bodies) ? bodies.bodies : []
+  for (const body of spaces) {
+    if (!body || typeof body !== 'object') continue
+    nodes.push({ t: 'space', i: body.active === false ? 0 : 1, a: 0, f: 0, k: hash32(body.id || body.name || 'space') })
+  }
+
+  const index = readJsonFile(join(root, 'documents', 'index.json'))
+  const documents = index && Array.isArray(index.documents) ? index.documents : []
+  for (const doc of documents) {
+    if (!doc || typeof doc !== 'object') continue
+    const stamp = Date.parse(doc.updatedAt || doc.createdAt || '')
+    const ageDays = Number.isFinite(stamp) ? Math.max(0, Math.round((now - stamp) / 86400000)) : -1
+    nodes.push({ t: 'doc', i: 0, a: ageDays, f: 0, k: hash32(doc.id || doc.filename || doc.title || 'doc') })
+  }
+
+  const limit = clamp(Math.round(num(cfg.maxMemoryNodes, DEFAULTS.maxMemoryNodes)), 0, 500)
+  cache.value = {
+    ok: true,
+    total: counts.user + counts.memory,
+    user: counts.user,
+    memory: counts.memory,
+    critical: counts.critical,
+    fresh: counts.fresh,
+    spaces: spaces.length,
+    documents: documents.length,
+    nodes: nodes.slice(0, limit),
+  }
+  return cache.value
 }
 
 /** Best-effort: the SessionId an Agent speaks for. */
@@ -98,6 +251,11 @@ export function apply(ctx, config) {
   cfg.opacity = clamp(num(cfg.opacity, DEFAULTS.opacity), 0, 1)
   cfg.offsetX = clamp(num(cfg.offsetX, 0), -4000, 4000)
   cfg.offsetY = clamp(num(cfg.offsetY, 0), -4000, 4000)
+  cfg.maxMemoryNodes = clamp(Math.round(num(cfg.maxMemoryNodes, DEFAULTS.maxMemoryNodes)), 0, 500)
+
+  /** Permanent character: on unless the row turns it off. */
+  const personaOn = cfg.persona !== false
+  const personaText = String(cfg.personaText || '').trim() || PERSONA_TEXT
 
   /** sessionId -> 'running' | 'idle' */
   const statuses = new Map()
@@ -119,6 +277,8 @@ export function apply(ctx, config) {
   let lastToolName = ''
   let lastToolAt = 0
   let lastActivityAt = 0
+  /** Cached memory projection; refreshed at most every MEMORY_REFRESH_MS. */
+  const memoryCache = { at: 0, value: undefined }
 
   /** 任何真实活动（流式帧、工具调用、会话追加）都刷新一次活跃时间。 */
   function touch() {
@@ -206,6 +366,8 @@ export function apply(ctx, config) {
       pulse: lastToolAt ? Math.max(0, 1 - (now - lastToolAt) / 1200) : 0,
       counters: Object.assign({}, counters),
       recent: recent.slice(-6).map((r) => ({ k: r.k, l: r.l })),
+      memory: projectMemory(ctx, cfg, memoryCache),
+      persona: { name: 'JARVIS', active: personaOn, chars: personaText.length },
       cfg,
     }
   }
@@ -339,6 +501,53 @@ export function apply(ctx, config) {
     }
   } catch (err) {
     warn('cannot register ' + ROUTE_PATH + ': ' + String(err && err.message))
+  }
+
+  /**
+   * Contribute the permanent character to every session's system prompt.
+   *
+   * This row is Host-scoped, so the section lands in the global prompt layer:
+   * assembly merges outer scopes first and a preset-scoped section of the same
+   * name would replace it, so the name stays ours (`jarvis:persona`) and no
+   * preset shadows it. Lifecycle follows `ctx.effect` like every other
+   * registration here.
+   */
+  const attachPersona = () => {
+    if (!personaOn) return () => {}
+    let prompt = null
+    try {
+      prompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined
+    } catch (err) {
+      void err
+    }
+    if (!prompt || typeof prompt.section !== 'function') {
+      warn('systemPrompt is unavailable; the persona section was not registered')
+      return () => {}
+    }
+    try {
+      const release = prompt.section({ name: PERSONA_SECTION, order: PERSONA_ORDER, text: personaText })
+      return () => {
+        if (typeof release === 'function') {
+          try {
+            release()
+          } catch (err) {
+            void err
+          }
+        }
+      }
+    } catch (err) {
+      warn('cannot register the persona section: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachPersona, 'jarvis-sphere: persona section')
+    else {
+      const dispose = attachPersona()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the persona section: ' + String(err && err.message))
   }
 
   return () => {
