@@ -181,6 +181,17 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 圆窗（球模式）：客户端窗口本身是一个圆
+
+点右上「球模式」后，**桌面窗口本身**被裁成圆形（不是页面里画一个圆）：
+
+- 用 Win32 `SetWindowRgn` + `CreateEllipticRgn` 把窗口区域改成圆，不改 `app.asar`；窗口同时收成 900×900 居中；
+- 进入前把原窗口位置/尺寸/最大化状态写进 `~/.dsh/jarvis-sphere/window-shape.json`，点「原版模式」按原样还原；
+- 圆里只有球，顶部一条隐形拖拽带可移动窗口，四个入口：`☰` 会话、`▤` 右侧面板、底部「对话」、顶部「原版模式」；
+- 页面同步切到 `full` 布局，抽屉打开时是覆盖在圆内的浮层（当前会被圆的边界裁切，后续把窗口区域扩成「圆 + 抽屉矩形」）；
+- 实现链路：客户端 `POST /dsh-jarvis/shape {mode:'ball'|'rect'}` → 插件 host 用 `child_process` 调 `shape-window.ps1`。
+
+**边界**：圆外的标题栏/菜单被裁掉，所以窗口拖动靠顶部拖拽带，关闭用任务栏或 Alt+F4；这套依赖 Win32 与 PowerShell，只在 Windows 有效。
 ## 全屏球（档 3）：通体只有球，其余全是抽屉
 
 `full: true` 是「只显示这个球」的模式：

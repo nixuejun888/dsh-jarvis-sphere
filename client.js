@@ -31,7 +31,15 @@ window.__ModuleLoader__.load({
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
       'html.jvs-stage [data-jvs-side]{opacity:0.62;transition:opacity 200ms ease;}',
       'html.jvs-stage [data-jvs-side]:hover{opacity:1;}',
-      'html.jvs-full body{background:#05070c !important;}',
+      'html.jvs-ball body{background:transparent !important;}',
+      'html.jvs-ball [data-jvs-side],html.jvs-ball [data-jvs-rail]{border-radius:14px;}',
+      'html.jvs-ball .jvs-mode-pill{top:28px;left:50%;right:auto;transform:translateX(-50%);}',
+      'html.jvs-ball .jvs-drawer-btn.jvs-left{left:6px;top:44%;}',
+      'html.jvs-ball .jvs-drawer-btn.jvs-right{right:6px;top:44%;}',
+      'html.jvs-ball .jvs-dock-btn{bottom:26px;}',
+      '.jvs-drag{position:fixed;top:0;left:50%;transform:translateX(-50%);width:min(52%,420px);height:20px;z-index:2147483001;-webkit-app-region:drag;display:none;cursor:move;}',
+      'html.jvs-ball .jvs-drag{display:block;}',
+      'html.jvs-ball [data-jvs-chat]{border-radius:16px;bottom:64px;}',
       'html.jvs-full [data-jvs-side]{position:fixed !important;left:0;top:0;bottom:0;width:min(22vw,300px) !important;height:auto !important;z-index:70;background:rgba(5,8,14,0.97);border-right:1px solid rgba(120,200,255,0.15);transform:translateX(-101%);transition:transform 180ms ease;overflow-y:auto !important;}',
       'html.jvs-full [data-jvs-side][data-jvs-open]{transform:none;}',
       'html.jvs-full [data-jvs-rail]{position:fixed !important;right:0;top:0;bottom:0;left:auto !important;width:min(24vw,340px) !important;max-height:none !important;height:auto !important;z-index:70;background:rgba(5,8,14,0.97);border-left:1px solid rgba(120,200,255,0.15);transform:translateX(101%);transition:transform 180ms ease;overflow-y:auto !important;border-radius:0;box-shadow:none;}',
@@ -44,8 +52,7 @@ window.__ModuleLoader__.load({
       '.jvs-drawer-btn.jvs-right{right:0;border-radius:8px 0 0 8px;}',
       '.jvs-dock-btn{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:80;padding:5px 14px;border-radius:999px;border:1px solid rgba(120,200,255,0.3);background:rgba(6,10,18,0.9);color:#8fd3ff;font:12px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;letter-spacing:0.08em;}',
       'html.jvs-full .jvs-dock-btn{display:block;}',
-      '.jvs-mode-exit{position:fixed;top:58px;right:16px;z-index:80;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
-      'html.jvs-full .jvs-mode-exit,html.jvs-stage .jvs-mode-exit{display:block;}',
+      '.jvs-mode-pill{position:fixed;top:58px;right:16px;z-index:2147483000;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.28);background:rgba(6,10,18,0.88);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
@@ -279,6 +286,12 @@ window.__ModuleLoader__.load({
       this.onClick = null
       this.onKeyDown = null
       this.root = this.host
+      /* controls created by an earlier engine instance keep their old closures:
+         remove every one of them before this instance creates its own. */
+      var staleControls = document.querySelectorAll('.jvs-drawer-btn,.jvs-dock-btn,.jvs-mode-pill,.jvs-mode-exit,.jvs-drag')
+      for (var staleIndex = 0; staleIndex < staleControls.length; staleIndex += 1) {
+        if (staleControls[staleIndex].parentNode) staleControls[staleIndex].parentNode.removeChild(staleControls[staleIndex])
+      }
       this.onResize = this.onResize.bind(this)
       this.frame = this.frame.bind(this)
 
@@ -291,6 +304,7 @@ window.__ModuleLoader__.load({
       }
       this.onResize()
       this.bindKeys()
+      this.ensureModePill()
       this.bindPanel()
       this.rebuild(this.cfg.nodeCount)
       this.detectTheme()
@@ -571,6 +585,7 @@ window.__ModuleLoader__.load({
         void err
       }
       if (this.immersive) this.tagPanels()
+      this.ensureModePill()
       this.onResize()
     }
 
@@ -629,6 +644,79 @@ window.__ModuleLoader__.load({
     }
 
 
+
+
+    /** Ball mode: the desktop window itself is clipped to a circle. */
+    SphereEngine.prototype.setBall = function (on) {
+      var self = this
+      this.ball = !!on
+      try {
+        document.documentElement.classList.toggle('jvs-ball', this.ball)
+        window.localStorage.setItem('jarvis:ball', this.ball ? '1' : '0')
+      } catch (err) {
+        void err
+      }
+      if (this.ball) {
+        try {
+          this.setFull(true)
+          if (!document.querySelector('.jvs-drag')) {
+            var drag = document.createElement('div')
+            drag.className = 'jvs-drag'
+            drag.setAttribute('aria-hidden', 'true')
+            document.body.appendChild(drag)
+          }
+        } catch (layoutErr) {
+          this.reportLayout('ball layout failed: ' + String(layoutErr && layoutErr.message), 'error', [])
+        }
+      } else {
+        var dragNode = document.querySelector('.jvs-drag')
+        if (dragNode && dragNode.parentNode) dragNode.parentNode.removeChild(dragNode)
+      }
+      this.ensureModePill()
+      try {
+        fetch('/dsh-jarvis/shape', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: this.ball ? 'ball' : 'rect' }),
+          credentials: 'same-origin',
+        }).then(function (response) {
+          return response.json()
+        }).then(function (data) {
+          self.reportLayout('shape ' + (data && data.ok ? 'ok' : 'failed') + ' ' + JSON.stringify(data).slice(0, 160), 'shape', [])
+        }).catch(function (err) {
+          self.reportLayout('shape fetch failed: ' + String(err && err.message), 'shape', [])
+        })
+      } catch (err) {
+        void err
+      }
+      this.onResize()
+    }
+
+    /** One pill that always offers the other mode, in either mode. */
+    SphereEngine.prototype.ensureModePill = function () {
+      var self = this
+      var pill = document.querySelector('.jvs-mode-pill')
+      if (!pill) {
+        pill = document.createElement('button')
+        pill.type = 'button'
+        pill.className = 'jvs-mode-pill'
+        pill.onclick = function (event) {
+          event.stopPropagation()
+          if (self.ball) {
+            self.setBall(false)
+            self.setFull(false)
+            self.setStage(false)
+          } else {
+            self.setStage(false)
+            self.setBall(true)
+          }
+        }
+        document.body.appendChild(pill)
+      }
+      pill.textContent = this.ball ? '原版模式' : '球模式'
+      pill.setAttribute('aria-label', this.ball ? '切回原版客户端' : '把客户端变成球')
+    }
+
     /** Full (档 3): the sphere is the whole screen, the conversation docks below. */
     SphereEngine.prototype.setFull = function (on) {
       this.full = !!on
@@ -647,6 +735,7 @@ window.__ModuleLoader__.load({
         this.removeDrawers()
         if (!this.stage) this.restoreChatCard()
       }
+      this.ensureModePill()
       this.onResize()
     }
 
@@ -772,7 +861,9 @@ window.__ModuleLoader__.load({
       var w = this.w || window.innerWidth
       var hgt = this.h || window.innerHeight
       if (!this.full) return null
-      return { cx: w * 0.5, cy: hgt * 0.36, R: Math.min(w, hgt) * 0.40 }
+      var radius = Math.min(w, hgt) * 0.40
+      var cy = Math.min(hgt - radius - 12, Math.max(radius + 12, hgt * 0.40))
+      return { cx: w * 0.5, cy: cy, R: radius }
     }
     /** Pick the conversation column: a tall, wide ancestor with a tall sibling. */
     SphereEngine.prototype.findChatRegion = function () {
@@ -858,7 +949,12 @@ window.__ModuleLoader__.load({
           size: (this.w || window.innerWidth) + 'x' + (this.h || window.innerHeight),
           chain: (chain || []).join('|'),
         })
-        fetch('/dsh-jarvis/detail', { method: 'POST', headers: { 'content-type': 'application/json' }, body: body, credentials: 'same-origin' }).catch(function () {})
+        fetch('/dsh-jarvis/detail', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: body,
+          credentials: 'same-origin',
+        }).catch(function () {})
       } catch (err) {
         void err
       }
@@ -965,7 +1061,22 @@ window.__ModuleLoader__.load({
       } catch (err) {
         savedFull = '0'
       }
-      if (savedFull === '1') this.setFull(true)
+      var savedBall = '0'
+      try {
+        savedBall = window.localStorage.getItem('jarvis:ball') || '0'
+      } catch (err) {
+        savedBall = '0'
+      }
+      if (savedBall === '1') {
+        this.setBall(true)
+        return
+      }
+      if (savedFull === '1') {
+        this.fullApplied = true
+        this.setFull(true)
+      } else if (savedFull === '0') {
+        this.fullApplied = true
+      }
     }
     SphereEngine.prototype.onResize = function () {
       var rect = this.host.getBoundingClientRect()
@@ -1016,7 +1127,10 @@ window.__ModuleLoader__.load({
       if (typeof cfg.showHud === 'boolean') this.cfg.showHud = cfg.showHud
       if (typeof cfg.gauge === 'string') this.cfg.gauge = cfg.gauge
       if (typeof cfg.stage === 'boolean' && cfg.stage !== !!this.stage) this.setStage(cfg.stage)
-      if (typeof cfg.full === 'boolean' && cfg.full !== !!this.full) this.setFull(cfg.full)
+      if (typeof cfg.full === 'boolean' && !this.fullApplied) {
+        this.fullApplied = true
+        if (cfg.full !== !!this.full) this.setFull(cfg.full)
+      }
       if (typeof cfg.glow === 'boolean') this.cfg.glow = cfg.glow
       if (typeof cfg.color === 'string') this.cfg.color = cfg.color
       if (typeof cfg.offsetX === 'number') this.cfg.offsetX = cfg.offsetX
