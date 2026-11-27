@@ -102,7 +102,7 @@ node test/keeper-smoke.mjs  # 25/25
 - 只记 `{时间, 日期, 会话短 id, 用户那句话的前 80 字, 本轮工具数}`，**不记助手输出**；
 - **按会话隔离**：标签与工具基线挂在各自的 pending 上，工具调用也按会话累加（`sessionTools`），两个会话并行时既不串标签、也不互涨工具数；
 - **子代理回合不计入**（`session.header.origin === 'subagent'` 跳过）：「今天第几件事」指人发起的回合；
-- **注入块不当成你说的话**（且注入块**不会清空**已抓到的标签：一条注入消息晚到，标签仍保留）：`<system-reminder>`、`Time sampled…`、`[MNEMON]` 开头的块被跳过；控制字符与换行压平，按码点截断不劈代理对；
+- **注入块不当成你说的话**（插件收不到 `user/message` 事件时，会在每回合第一步从会话消息里读回你那句话）：`<system-reminder>`、`Time sampled…`、`[MNEMON]` 开头的块被跳过；控制字符与换行压平，按码点截断不劈代理对；
 - 文件超过 512 KB 时**按字节**从尾部回收到 ≤80% 预算（且 ≤2000 行）；临时文件名带 pid，rename 失败会清掉，不留半截或 `.tmp`；
 - 重启时聚合整个（有界的）文件恢复当天计数，不是只看尾部几百行；HUD 多一段 `N TODAY`；
 - 只读工具 `jarvis_chronicle` 返回今天 / 最近 7 天概览 + 最近 N 条记录，时间按**本地时区**显示；
@@ -279,7 +279,7 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
-node test/chronicle-smoke.mjs  # 35/35  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
+node test/chronicle-smoke.mjs  # 37/37  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 node test/doctor-smoke.mjs  # 32/32  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 node test/writer-smoke.mjs  # 46/46  执行通道：选择器防漂移、四种动作、预演零写入、同毫秒归档去重、失败清理、CRLF 保持、白名单

@@ -279,6 +279,39 @@ const userMessage = (text) => ({ type: 'user/message', data: { role: 'user', con
   const third = JSON.parse(readFileSync(join(order, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[2])
   check('an injected-only turn has no label', third.u === '', third.u)
 }
+// --- 11. the human prompt is read from the session when no user/message event arrives ---
+{
+  const sessionDir = join(root, 'session-label')
+  const { ctx, listeners } = makeCtx()
+  apply(ctx, { nodeCount: 300, chronicleDir: sessionDir })
+  const fakeSession = {
+    id: 'session-xyz',
+    deriveMessages() {
+      return [
+        { role: 'user', content: [{ type: 'text', text: '上一轮的话' }] },
+        { role: 'assistant', content: [{ type: 'text', text: '回答' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Time sampled while preparing turn 2' }] },
+        { role: 'user', content: [{ type: 'text', text: '这一轮的真人指令' }] },
+      ]
+    },
+  }
+  // no user/message event at all: only step/start, then the turn ends
+  emit(listeners, 'session/event', fakeSession, { type: 'step/start', data: { turn: 2, step: 1 } })
+  emit(listeners, 'session/event', fakeSession, { type: 'turn/end', data: { turn: 2 } })
+  const row = JSON.parse(readFileSync(join(sessionDir, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[0])
+  check('the label is read from the session at step start', row.u === '这一轮的真人指令', row.u)
+
+  // a session without deriveMessages must not throw
+  const noDerive = { id: 'session-noderive' }
+  let threw = null
+  try {
+    emit(listeners, 'session/event', noDerive, { type: 'step/start', data: { turn: 3, step: 1 } })
+    emit(listeners, 'session/event', noDerive, { type: 'turn/end', data: { turn: 3 } })
+  } catch (error) {
+    threw = error
+  }
+  check('a session without a message view does not throw', threw === null, threw === null ? null : String(threw.message))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

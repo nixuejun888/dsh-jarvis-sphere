@@ -558,7 +558,7 @@ export function apply(ctx, config) {
    * Per-session pending turn: a label and tool baseline belong to the session
    * that produced them, never to whichever session ends a turn first.
    */
-  const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0 } }
+  const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0, types: Object.create(null) } }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
@@ -700,7 +700,8 @@ function parseChronicleLine(line) {
     } else if (existsSync(chronicleDir)) {
       try {
         accessSync(chronicleDir, constants.W_OK)
-        add('chronicle', 'ok', 'writable ' + chronicleDir + ' · labels ' + chronicle.diag.labelled + '/' + chronicle.diag.users + ' user messages')
+        const kinds = Object.keys(chronicle.diag.types).sort().map((k) => k + '=' + chronicle.diag.types[k]).join(' ')
+        add('chronicle', 'ok', 'writable ' + chronicleDir + ' · labels ' + chronicle.diag.labelled + '/' + chronicle.diag.users + ' user messages · events ' + (kinds || 'none yet'))
       } catch (err) {
         add('chronicle', 'fail', 'cannot write ' + chronicleDir + ': ' + String(err && err.message))
       }
@@ -997,10 +998,45 @@ function parseChronicleLine(line) {
     }
   }
 
-  function handleSessionEvent(event, sessionId, origin) {
+  /** Last user message with real text, read from the session's message view. */
+  function lastUserLabel(session) {
+    try {
+      if (!session || typeof session.deriveMessages !== 'function') return ''
+      const messages = session.deriveMessages()
+      if (!Array.isArray(messages)) return ''
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const message = messages[i]
+        if (!message || message.role !== 'user') continue
+        const label = messageTextOf(message)
+        if (label) return label
+      }
+    } catch (err) {
+      return ''
+    }
+    return ''
+  }
+  function handleSessionEvent(event, sessionId, origin, session) {
     const type = event && event.type
     if (typeof type !== 'string' || !type) return
+    /* Which event types actually reach a plugin listener: the chronicle label
+       depends on the human text arriving with one of them, so make the arrival
+       visible instead of assuming. */
+    chronicle.diag.types[type] = (chronicle.diag.types[type] || 0) + 1
     const data = event && event.data && typeof event.data === 'object' ? event.data : {}
+    /* The human prompt is not delivered as a user/message session event (the
+       live type counter proved that), so on the first step of a turn read it
+       back from the session itself. Cheap enough: only when no label is held. */
+    if (type === 'step/start' && session) {
+      const pendingKey = String(sessionId || '')
+      const held = chronicle.pending.get(pendingKey)
+      if (!held || !held.label) {
+        const label = lastUserLabel(session)
+        if (label) {
+          chronicle.pending.set(pendingKey, { label, toolsAt: held ? held.toolsAt : (sessionTools.get(pendingKey) || 0) })
+          chronicle.diag.labelled += 1
+        }
+      }
+    }
     if (type === 'tool/call') onToolCall(data, sessionId)
     else if (type === 'tool/result') onToolResult(data)
     else if (type === 'turn/end') {
@@ -1021,7 +1057,6 @@ function parseChronicleLine(line) {
       const pendingKey = String(sessionId || '')
       const label = messageTextOf(data)
       chronicle.diag.users += 1
-      if (label) chronicle.diag.labelled += 1
       const previous = chronicle.pending.get(pendingKey)
       chronicle.pending.set(pendingKey, {
         label: label || (previous ? previous.label : ''),
@@ -1125,7 +1160,7 @@ function parseChronicleLine(line) {
     touch()
     const id = session && session.id ? String(session.id) : ''
     const origin = session && session.header ? session.header.origin : undefined
-    handleSessionEvent(event, id, origin)
+    handleSessionEvent(event, id, origin, session)
   })
 
   on('subagent/start', () => {
