@@ -189,7 +189,7 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 在每步的系统提示上下文里加一行：`当前场景：Unity / 3ds Max（相关记忆可用 jarvis_context action=find 取回，先看再答）`——只在我需要时出现，10 分钟后自动失效；
 - 提供只读工具 `jarvis_context`：`action=list` 看当前场景，`action=find` 按场景关键词从记忆库里挑出相关条目（最多 20 条，每条截 80 字）。
 
-面板「状态」页同样显示当前场景。`scene: false` 关掉整块（提示与工具都不注册）。
+面板「状态」页同样显示当前场景。场景是进程级单例（所有会话共享），子代理的工具调用也会更新它。`scene: false` 关掉整块（提示与工具都不注册）。
 ## 事件闪点（D）：今天在球上留下的痕迹
 
 工具调用与错误会在球面留下会扩散的圆环，约 30 秒淡出——「今天做了什么」不只在 HUD 数字里。
@@ -221,7 +221,7 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 
 - **今天做了什么**：轮次/工具数 + 当天最近几轮的标签；
 - **记忆**：MEMORY/USER 占用比例、条目/文档/空间数、待复盘条数；
-- **自检**：九通道逐项状态；
+- **自检**：十通道逐项状态；
 - **备份**：目录、最新归档、份数、年龄；
 - **提醒**：当前未处理的告警。
 
@@ -351,7 +351,7 @@ node test/report-smoke.mjs  # 33/33  日报：五段内容、历史日计数与�
 node test/recap-smoke.mjs   # 14/14  自动复盘：入队、去重、提醒、confirm/drop、确认后不再入队、可关闭
 node test/chronicle-smoke.mjs # 38/38  编年史：一回合一行、会话隔离、注入块与中文快照过滤、重启恢复、按字节轮换、可关闭
 node test/doctor-smoke.mjs  # 32/32  自检：十通道 + 健康全绿、目录未建、工具拒绝
-node test/scene-smoke.mjs   # 15/15 场景：指令/工具名识别、提示、jarvis_context、10 分钟失效、可关
+node test/scene-smoke.mjs   # 22/22 场景：指令/工具名识别、提示、jarvis_context、10 分钟失效、可关
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 node test/writer-smoke.mjs  # 46/46  执行通道：选择器防漂移、四种动作、预演零写入、同毫秒归档去重、失败清理、CRLF 保持、白名单
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态

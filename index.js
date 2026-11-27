@@ -156,7 +156,7 @@ function keepNewestByBytes(lines, budgetBytes, limit) {
 }
 
 /** Harness-injected text blocks are context, not something the user said. */
-const INJECTED_LABEL = /^(<system-reminder>|Time sampled while preparing|\[MNEMON\]|MNEMON (?:RUNTIME MEMORY SNAPSHOT|VIEW TOOLS|VIEW ROUTES|VIEW AVAILABILITY)|MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性))/u
+const INJECTED_LABEL = /^(<system-reminder>|Time sampled while preparing|It sent you a message (just )?before finishing|Background subagent|The earlier instructions from|The following information describes your current session|A skill is a reusable|MNEMON SCOPED RUNTIME MEMORY PROTOCOL|MNEMON OPTIONAL AUTO CAPTURE|当前场景：|\[MNEMON\]|MNEMON (?:RUNTIME MEMORY SNAPSHOT|VIEW TOOLS|VIEW ROUTES|VIEW AVAILABILITY)|MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性))/u
 
 /**
  * The human's own words from a recorded user message, clipped. Injected
@@ -677,6 +677,12 @@ export function apply(ctx, config) {
         text: Array.from(clipLabel(content)).slice(0, 80).join(''),
       })
     }
+    hits.sort((left, right) => {
+      const rank = { critical: 0, normal: 1, low: 2 }
+      const leftRank = rank[left.importance] === undefined ? 1 : rank[left.importance]
+      const rightRank = rank[right.importance] === undefined ? 1 : rank[right.importance]
+      return leftRank - rightRank
+    })
     return hits.slice(0, Math.max(1, limit || 6))
   }
 
@@ -1238,6 +1244,7 @@ function parseChronicleLine(line) {
       const label = messageTextOf(data)
       chronicle.diag.users += 1
       const previous = chronicle.pending.get(pendingKey)
+      if (label) detectScene(label)
       chronicle.pending.set(pendingKey, {
         label: label || (previous ? previous.label : ''),
         toolsAt: previous ? previous.toolsAt : (sessionTools.get(pendingKey) || 0),
@@ -1437,6 +1444,7 @@ function parseChronicleLine(line) {
       items.push({ label: '提醒', value: String(snapshot.count) })
       items.push({ label: '待复盘', value: String(recap.pending.length) })
       items.push({ label: '备份', value: String(backupReport().count || 0) + ' 份' })
+      if (scene.id && Date.now() - scene.at <= SCENE_TTL_MS) items.push({ label: '场景', value: scene.label })
       items.push({ label: '提示', value: '点上方按钮看详情，Esc 关闭' })
     }
     if (items.length > 14) {
@@ -2547,7 +2555,9 @@ function parseChronicleLine(line) {
         const action = String((args && args.action) || 'list')
         const active = scene.id && Date.now() - scene.at <= SCENE_TTL_MS ? { id: scene.id, label: scene.label } : null
         if (action === 'list') return { action: 'list', scene: active }
-        return { action: 'find', scene: active, entries: active ? sceneMemories(Number(args && args.limit) || 6) : [] }
+        const asked = Number(args && args.limit)
+        const limit = Math.min(20, Math.max(1, Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : 6))
+        return { action: 'find', scene: active, entries: active ? sceneMemories(limit) : [] }
       },
     }
     try {
@@ -2750,5 +2760,4 @@ function parseChronicleLine(line) {
     activeTools.clear()
   }
 }
-
 

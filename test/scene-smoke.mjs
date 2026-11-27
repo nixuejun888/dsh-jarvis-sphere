@@ -149,6 +149,30 @@ function sessionWith(text) {
     Date.now = realNow
   }
 }
+// --- 5. an injected completion notice does not hide the human instruction ---
+{
+  const { ctx, routes, listeners, contexts } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c5'), backupDir: join(root, 'b5'), alerts: false })
+  const injected = { id: 'session-scene', deriveMessages() { return [
+    { role: 'user', content: [{ type: 'text', text: 'It sent you a message just before finishing, so its closing message is omitted.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Unity 的粒子着色器报错了' }] },
+  ] } }
+  emit(listeners, 'session/event', injected, { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: 'It sent you a message just before finishing, so its closing message is omitted.' }] } })
+  emit(listeners, 'session/event', injected, { type: 'step/start', data: { turn: 1, step: 1 } })
+  check('the scene follows the human message', (state(routes).scene || {}).id === 'unity', state(routes).scene)
+}
+
+// --- 6. limit is clamped to the documented range ---
+{
+  const { ctx, registered, listeners } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c6'), backupDir: join(root, 'b6'), alerts: false })
+  emit(listeners, 'session/event', sessionWith('Unity 项目'), { type: 'step/start', data: { turn: 1, step: 1 } })
+  const tool = registered.find((definition) => definition.name === 'jarvis_context')
+  for (const asked of [0, 21, 1000, -5, 'abc']) {
+    const found = await tool.execute({ action: 'find', limit: asked }, {})
+    check('limit ' + asked + ' is clamped to 1..20', found.entries.length <= 20 && found.entries.length >= 1, found.entries.length)
+  }
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
