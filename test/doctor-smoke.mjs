@@ -1,6 +1,6 @@
 // Harness for the self-check: a healthy host reports ok, a broken host reports
 // degraded or fail with a concrete fix, and the report never throws.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../index.js'
@@ -18,6 +18,7 @@ writeFileSync(join(memoryDir, 'runtime', 'memories.json'), JSON.stringify({ vers
 ] }))
 writeFileSync(join(memoryDir, 'runtime', 'MEMORY.md'), 'M'.repeat(200))
 const chronicleDir = join(root, 'chronicle')
+mkdirSync(chronicleDir, { recursive: true })
 
 function makeCtx(options = {}) {
   const routes = new Map()
@@ -39,6 +40,15 @@ function makeCtx(options = {}) {
       if (name === 'systemPrompt') return options.noPrompt ? undefined : { section: () => () => {} }
       if (name === 'tools') {
         if (options.noTools) return undefined
+        if (options.toolsThrow) {
+          return {
+            register(definition) {
+              if (options.toolsThrow === 'all' || options.toolsThrow === definition.name) throw new Error('register refused')
+              registered.push(definition)
+              return () => {}
+            },
+          }
+        }
         return {
           register(definition) {
             registered.push(definition)
@@ -86,7 +96,7 @@ function byId(report, id) {
   check('diagnostics are in the snapshot', !!report && Array.isArray(report.checks), report?.checks?.length)
   check('healthy host reports ok', report?.status === 'ok', report?.status)
   check('every check carries id + status + detail', report.checks.every((c) => c.id && c.status && c.detail), report.checks.map((c) => c.id))
-  check('the six expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
+  check('the seven expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
   check('route check names the served path', /\/dsh-jarvis\/state/u.test(byId(report, 'route')?.detail || ''), byId(report, 'route')?.detail)
 
   const doctor = registered.find((definition) => definition.name === 'jarvis_doctor')
@@ -154,6 +164,30 @@ function byId(report, id) {
   check('diagnostics probe services once per cache window', probes <= 2, probes)
 }
 
+// --- 6. a not-yet-created chronicle directory is degraded, never created ---
+{
+  const freshDir = join(root, 'fresh-chronicle')
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: freshDir })
+  const report = state(routes)?.diagnostics
+  check('missing chronicle dir is degraded, not created', byId(report, 'chronicle')?.status === 'degraded', byId(report, 'chronicle'))
+  check('diagnostics never create the directory', !existsSync(freshDir), existsSync(freshDir))
+}
+
+// --- 7. a refused tool registration is reported as missing, not as on ---
+{
+  const { ctx, routes } = makeCtx({ toolsThrow: 'all' })
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir })
+  const report = state(routes)?.diagnostics
+  check('all tools refused reports fail', byId(report, 'tools')?.status === 'fail', byId(report, 'tools'))
+  check('refused tools are named as missing', /keeper missing · chronicle missing · doctor missing/u.test(byId(report, 'tools')?.detail || ''), byId(report, 'tools')?.detail)
+
+  const partial = makeCtx({ toolsThrow: 'jarvis_doctor' })
+  apply(partial.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir })
+  const partialReport = state(partial.routes)?.diagnostics
+  check('one refused tool reports degraded', byId(partialReport, 'tools')?.status === 'degraded', byId(partialReport, 'tools'))
+  check('the refused tool is named', /doctor missing/u.test(byId(partialReport, 'tools')?.detail || ''), byId(partialReport, 'tools')?.detail)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

@@ -542,7 +542,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -675,13 +675,31 @@ function parseChronicleLine(line) {
 
     if (typeof cfg.chronicle === 'boolean' && cfg.chronicle === false) {
       add('chronicle', 'skip', 'turned off by config')
-    } else {
+    } else if (existsSync(chronicleDir)) {
       try {
-        mkdirSync(chronicleDir, { recursive: true })
         accessSync(chronicleDir, constants.W_OK)
         add('chronicle', 'ok', 'writable ' + chronicleDir)
       } catch (err) {
         add('chronicle', 'fail', 'cannot write ' + chronicleDir + ': ' + String(err && err.message))
+      }
+    } else {
+      /* The poll path must not create directories: report readiness instead. */
+      let ancestor = chronicleDir
+      for (;;) {
+        const parent = dirname(ancestor)
+        if (!parent || parent === ancestor) break
+        ancestor = parent
+        if (existsSync(ancestor)) break
+      }
+      try {
+        if (!statSync(ancestor).isDirectory()) {
+          add('chronicle', 'fail', 'parent ' + ancestor + ' is a file, so the directory can never be created')
+        } else {
+          accessSync(ancestor, constants.W_OK)
+          add('chronicle', 'degraded', 'not created yet; the first turn creates it under ' + ancestor)
+        }
+      } catch (err) {
+        add('chronicle', 'fail', 'parent ' + ancestor + ' is not writable: ' + String(err && err.message))
       }
     }
 
@@ -697,12 +715,25 @@ function parseChronicleLine(line) {
     add('services', missing.length === 0 ? 'ok' : missing.length >= services.length ? 'fail' : 'degraded',
       missing.length === 0 ? 'all present' : 'missing: ' + missing.join(', '))
 
-    const stuckSchedule = scheduleCache.inflight && Date.now() - scheduleCache.inflightAt > 10000
-    add('caches', stuckSchedule ? 'degraded' : 'ok',
-      stuckSchedule ? 'schedule read stuck for more than 10 s' : 'memory ' + Math.round((Date.now() - healthCache.at) / 1000) + 's · context ' + Math.round((Date.now() - contextCache.at) / 1000) + 's ago')
+    const nowMs = Date.now()
+    const stuckSchedule = scheduleCache.inflight && nowMs - scheduleCache.inflightAt > 10000
+    const stalledRecently = scheduleCache.lastStuckAt > 0 && nowMs - scheduleCache.lastStuckAt < 60000
+    add('caches', stuckSchedule || stalledRecently ? 'degraded' : 'ok',
+      stuckSchedule
+        ? 'schedule read stuck for more than 10 s'
+        : stalledRecently
+          ? 'a schedule read stalled and was retried ' + Math.round((nowMs - scheduleCache.lastStuckAt) / 1000) + 's ago'
+          : 'memory ' + Math.round((nowMs - healthCache.at) / 1000) + 's · context ' + Math.round((nowMs - contextCache.at) / 1000) + 's ago')
 
-    add('tools', (registered.keeper || cfg.keeper === false) && (registered.chronicleTool || cfg.chronicle === false) ? 'ok' : 'degraded',
-      'keeper ' + (registered.keeper ? 'on' : cfg.keeper === false ? 'off' : 'missing') + ' · chronicle ' + (registered.chronicleTool ? 'on' : cfg.chronicle === false ? 'off' : 'missing'))
+    const toolWanted = [
+      { name: 'keeper', ok: registered.keeper, disabled: cfg.keeper === false },
+      { name: 'chronicle', ok: registered.chronicleTool, disabled: cfg.chronicle === false },
+      { name: 'doctor', ok: registered.doctor, disabled: false },
+    ]
+    const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
+    const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
+    add('tools', toolStatus,
+      toolWanted.map((tool) => tool.name + ' ' + (tool.ok ? 'on' : tool.disabled ? 'off' : 'missing')).join(' · '))
 
     const order = { fail: 2, degraded: 1, ok: 0, skip: -1 }
     let worst = 'ok'
@@ -1042,7 +1073,7 @@ function parseChronicleLine(line) {
   /** Live-session context pressure, recomputed on a slower clock than polling. */
   const contextCache = { at: 0, value: { contextRatio: 0, contextTokens: 0, contextWindow: 0, sessions: 0 } }
   /** Active scheduled tasks; the service is async, so the snapshot reads a cache. */
-  const scheduleCache = { at: 0, inflight: false, inflightAt: 0, gen: 0, value: { schedulesActive: 0, nextDueAt: '' } }
+  const scheduleCache = { at: 0, inflight: false, inflightAt: 0, lastStuckAt: 0, gen: 0, value: { schedulesActive: 0, nextDueAt: '' } }
 
   /** The data root the audit tool reads: same discovery as the sphere. */
   const resolveMemoryRoot = () => {
@@ -1155,6 +1186,7 @@ function parseChronicleLine(line) {
        arrives while a read is pending must not touch the service at all. */
     if (scheduleCache.inflight) {
       if (now - scheduleCache.inflightAt < 10000) return
+      scheduleCache.lastStuckAt = now
       scheduleCache.inflight = false
     }
     let service
@@ -1235,8 +1267,13 @@ function parseChronicleLine(line) {
    */
   const attachKeeper = () => {
     if (cfg.keeper === false) return () => {}
+    const release = registerKeeper(ctx, resolveMemoryRoot, resolveMemoryLimits)
+    if (typeof release !== 'function') return () => {}
     registered.keeper = true
-    return registerKeeper(ctx, resolveMemoryRoot, resolveMemoryLimits)
+    return () => {
+      registered.keeper = false
+      release()
+    }
   }
   try {
     if (typeof ctx.effect === 'function') ctx.effect(attachKeeper, 'jarvis-sphere: memory keeper')
@@ -1298,9 +1335,13 @@ function parseChronicleLine(line) {
       },
     }
     try {
-      const release = tools.register(definition) || (() => {})
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
       registered.chronicleTool = true
-      return release
+      return () => {
+        registered.chronicleTool = false
+        release()
+      }
     } catch (err) {
       warn('cannot register jarvis_chronicle: ' + String(err && err.message))
       return () => {}
@@ -1326,7 +1367,7 @@ function parseChronicleLine(line) {
     }
     if (!tools || typeof tools.register !== 'function') return () => {}
     const ADVICE = {
-      route: '重启插件；若仍是 none，检查是否有别的插件注册了同名路由',
+      route: '重启 DSH 进程（只重载插件无效，泄漏的主路由没有可释放的 disposer）；若仍是 none，检查是否有别的插件注册了同名路由',
       persona: '检查 systemPrompt 服务是否在位；人格段没注册等于没有永久人格',
       memory: '把 memoryDirs 指向 Mnemon 的数据目录，或确认 dsh-mnemon 的 dataDir 可读',
       chronicle: '检查 chronicleDir 是否存在且可写（默认 ~/.dsh/jarvis-sphere）',
@@ -1360,7 +1401,13 @@ function parseChronicleLine(line) {
       execute: async () => diagnose(),
     }
     try {
-      return tools.register(definition) || (() => {})
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.doctor = true
+      return () => {
+        registered.doctor = false
+        release()
+      }
     } catch (err) {
       warn('cannot register jarvis_doctor: ' + String(err && err.message))
       return () => {}

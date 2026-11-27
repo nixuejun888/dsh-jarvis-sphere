@@ -78,7 +78,7 @@ disposeTool()
 check('tool dispose unregisters', registered.length === 0, registered.length)
 
 // No tools service: a no-op disposer, never a throw.
-check('missing tools service is a no-op', typeof registerKeeper({ get: () => undefined }, () => dir) === 'function', true)
+check('missing tools service reports no registration', registerKeeper({ get: () => undefined }, () => dir) === null, registerKeeper({ get: () => undefined }, () => dir))
 
 // Secret scrubbing: previews are quoted into the model transcript, so they must
 // never carry a key or a password.

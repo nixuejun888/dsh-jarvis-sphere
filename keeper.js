@@ -293,7 +293,8 @@ export function registerKeeper(ctx, resolveRoot, resolveLimits) {
   } catch (err) {
     void err
   }
-  if (!tools || typeof tools.register !== 'function') return () => {}
+  /* null tells the caller nothing was registered, so a self-check must not claim it was. */
+  if (!tools || typeof tools.register !== 'function') return null
 
   const definition = {
     name: 'jarvis_memory_review',
@@ -326,7 +327,7 @@ export function registerKeeper(ctx, resolveRoot, resolveLimits) {
     if (ctx.logger && typeof ctx.logger.warn === 'function') {
       ctx.logger.warn('jarvis-sphere: cannot register jarvis_memory_review: ' + String(err && err.message))
     }
-    return () => {}
+    return null
   }
   return () => {
     if (typeof release === 'function') {
