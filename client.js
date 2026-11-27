@@ -36,14 +36,14 @@ window.__ModuleLoader__.load({
       'html.jvs-full [data-jvs-side][data-jvs-open]{transform:none;}',
       'html.jvs-full [data-jvs-rail]{position:fixed !important;right:0;top:0;bottom:0;left:auto !important;width:min(24vw,340px) !important;max-height:none !important;height:auto !important;z-index:70;background:rgba(5,8,14,0.97);border-left:1px solid rgba(120,200,255,0.15);transform:translateX(101%);transition:transform 180ms ease;overflow-y:auto !important;border-radius:0;box-shadow:none;}',
       'html.jvs-full [data-jvs-rail][data-jvs-open]{transform:none;}',
-      'html.jvs-full [data-jvs-chat]{position:fixed !important;left:50% !important;transform:translateX(-50%) !important;bottom:14px !important;top:auto !important;width:min(920px,94vw) !important;height:36vh !important;z-index:40 !important;border-radius:18px;border:1px solid rgba(120,200,255,0.22);background:rgba(6,9,16,0.9);box-shadow:0 24px 60px rgba(0,0,0,0.6);backdrop-filter:blur(12px);overflow-y:auto !important;}',
-      'html.jvs-full [data-jvs-chat][data-jvs-collapsed]{height:96px !important;}',
+      'html.jvs-full [data-jvs-chat]{position:fixed !important;left:50% !important;transform:translate(-50%,115%) !important;bottom:0 !important;top:auto !important;width:min(1040px,96vw) !important;height:min(46vh,520px) !important;z-index:40 !important;border-radius:18px 18px 0 0;border:1px solid rgba(120,200,255,0.22);border-bottom:none;background:rgba(6,9,16,0.94);box-shadow:0 -18px 60px rgba(0,0,0,0.6);backdrop-filter:blur(12px);overflow-y:auto !important;transition:transform 200ms ease;}',
+      'html.jvs-full [data-jvs-chat][data-jvs-open]{transform:translate(-50%,0) !important;}',
       '.jvs-drawer-btn{position:fixed;top:50%;transform:translateY(-50%);z-index:80;width:26px;height:54px;border-radius:8px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:14px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
       'html.jvs-full .jvs-drawer-btn{display:block;}',
       '.jvs-drawer-btn.jvs-left{left:0;border-radius:0 8px 8px 0;}',
       '.jvs-drawer-btn.jvs-right{right:0;border-radius:8px 0 0 8px;}',
-      '.jvs-chat-toggle{position:fixed;right:16px;bottom:calc(36vh + 22px);z-index:80;padding:3px 8px;border-radius:8px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
-      'html.jvs-full .jvs-chat-toggle{display:block;}',
+      '.jvs-dock-btn{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:80;padding:5px 14px;border-radius:999px;border:1px solid rgba(120,200,255,0.3);background:rgba(6,10,18,0.9);color:#8fd3ff;font:12px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;letter-spacing:0.08em;}',
+      'html.jvs-full .jvs-dock-btn{display:block;}',
       '.jvs-mode-exit{position:fixed;top:58px;right:16px;z-index:80;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
       'html.jvs-full .jvs-mode-exit,html.jvs-stage .jvs-mode-exit{display:block;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
@@ -641,6 +641,8 @@ window.__ModuleLoader__.load({
       if (this.full) {
         if (!this.stage) this.liftChatCard()
         this.ensureDrawers()
+        var open = document.querySelectorAll('[data-jvs-open]')
+        for (var i = 0; i < open.length; i += 1) open[i].removeAttribute('data-jvs-open')
       } else {
         this.removeDrawers()
         if (!this.stage) this.restoreChatCard()
@@ -681,27 +683,26 @@ window.__ModuleLoader__.load({
         }
         document.body.appendChild(right)
       }
-      if (!document.querySelector('.jvs-chat-toggle')) {
-        var toggle = document.createElement('button')
-        toggle.type = 'button'
-        toggle.className = 'jvs-chat-toggle'
-        toggle.textContent = '收起对话'
-        toggle.onclick = function (event) {
+      if (!document.querySelector('.jvs-dock-btn')) {
+        var dock = document.createElement('button')
+        dock.type = 'button'
+        dock.className = 'jvs-dock-btn'
+        dock.textContent = '对话'
+        dock.setAttribute('aria-label', '打开对话抽屉')
+        dock.onclick = function (event) {
           event.stopPropagation()
           var chat = document.querySelector('[data-jvs-chat]')
           if (!chat) return
-          var collapsed = chat.hasAttribute('data-jvs-collapsed')
-          if (collapsed) chat.removeAttribute('data-jvs-collapsed')
-          else chat.setAttribute('data-jvs-collapsed', '1')
-          toggle.textContent = collapsed ? '收起对话' : '展开对话'
+          if (chat.hasAttribute('data-jvs-open')) chat.removeAttribute('data-jvs-open')
+          else chat.setAttribute('data-jvs-open', '1')
         }
-        document.body.appendChild(toggle)
+        document.body.appendChild(dock)
       }
       if (!document.querySelector('.jvs-mode-exit')) {
         var exit = document.createElement('button')
         exit.type = 'button'
         exit.className = 'jvs-mode-exit'
-        exit.textContent = '退出球模式'
+        exit.textContent = '原版模式'
         exit.onclick = function (event) {
           event.stopPropagation()
           self.setFull(false)
@@ -754,7 +755,7 @@ window.__ModuleLoader__.load({
         window.removeEventListener('click', this.drawerClick, true)
         this.drawerClick = null
       }
-      var names = ['.jvs-drawer-btn', '.jvs-chat-toggle', '.jvs-mode-exit']
+      var names = ['.jvs-drawer-btn', '.jvs-dock-btn', '.jvs-mode-exit']
       for (var i = 0; i < names.length; i += 1) {
         var nodes = document.querySelectorAll(names[i])
         for (var j = 0; j < nodes.length; j += 1) {
