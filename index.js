@@ -571,7 +571,7 @@ export function apply(ctx, config) {
    */
   const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0, types: Object.create(null) } }
   /** Instructions that sound durable: queued so a human can confirm them. */
-  const recap = { pending: [] }
+  const recap = { pending: [], recent: [] }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
@@ -609,6 +609,7 @@ export function apply(ctx, config) {
       const raw = readFileSync(join(chronicleDir, RECAP_FILE), 'utf8')
       const parsed = JSON.parse(raw)
       recap.pending = Array.isArray(parsed.pending) ? parsed.pending.slice(-RECAP_MAX) : []
+      recap.recent = Array.isArray(parsed.recent) ? parsed.recent.slice(-RECAP_MAX) : []
     } catch (err) {
       recap.pending = []
     }
@@ -618,7 +619,7 @@ export function apply(ctx, config) {
   function saveRecap() {
     try {
       mkdirSync(chronicleDir, { recursive: true })
-      writeFileSync(join(chronicleDir, RECAP_FILE), JSON.stringify({ pending: recap.pending }, null, 2))
+      writeFileSync(join(chronicleDir, RECAP_FILE), JSON.stringify({ pending: recap.pending, recent: recap.recent }, null, 2))
       return true
     } catch (err) {
       warn('cannot write the recap queue: ' + String(err && err.message))
@@ -636,6 +637,7 @@ export function apply(ctx, config) {
     if (label.length < 4) return false
     if (!RECAP_PATTERN.test(label)) return false
     if (recap.pending.some((item) => item.text === label)) return false
+    if (recap.recent.includes(label)) return false
     recap.pending.push({ t: new Date().toISOString(), s: String(sessionId || '').slice(0, 12), text: label.slice(0, 200) })
     recap.pending = recap.pending.slice(-RECAP_MAX)
     saveRecap()
@@ -652,6 +654,10 @@ export function apply(ctx, config) {
       removed.push(recap.pending[index - 1])
       recap.pending.splice(index - 1, 1)
     }
+    for (const item of removed) {
+      if (item && typeof item.text === 'string') recap.recent.push(item.text)
+    }
+    recap.recent = recap.recent.slice(-RECAP_MAX)
     saveRecap()
     return { action, resolved: removed, remaining: recap.pending.length }
   }

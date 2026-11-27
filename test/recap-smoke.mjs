@@ -114,6 +114,12 @@ function sessionWith(text) {
   const confirmed = await tool.execute({ action: 'confirm' }, {})
   check('confirming removes the item', confirmed.remaining === 0 && confirmed.resolved.length === 1, confirmed)
   check('the alert clears with the queue', !(state(routes).alerts.active || []).some((alert) => alert.id === 'recap'), state(routes).alerts)
+
+  // a confirmed instruction must not come back on the next turn
+  emit(listeners, session, { type: 'step/start', data: { turn: 4, step: 1 } })
+  emit(listeners, session, { type: 'turn/end', data: { turn: 4 } })
+  check('a confirmed instruction is not queued again', JSON.parse(readFileSync(queueFile, 'utf8')).pending.length === 0, JSON.parse(readFileSync(queueFile, 'utf8')).pending.length)
+  check('the resolved text is remembered', JSON.parse(readFileSync(queueFile, 'utf8')).recent.includes('以后备份都放到 D 盘'), JSON.parse(readFileSync(queueFile, 'utf8')).recent)
 }
 
 // --- 2. recap: false disables both the queue and the tool ---
