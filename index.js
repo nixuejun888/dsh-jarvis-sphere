@@ -490,6 +490,7 @@ export function apply(ctx, config) {
       recent: recent.slice(-6).map((r) => ({ k: r.k, l: r.l })),
       memory: projectMemory(ctx, cfg, memoryCache),
       persona: { name: 'JARVIS', active: personaOn, chars: personaText.length },
+      health: memoryHealth(),
       cfg,
     }
   }
@@ -672,6 +673,10 @@ export function apply(ctx, config) {
     warn('cannot register the persona section: ' + String(err && err.message))
   }
 
+  /** How long the health probe is reused. */
+  const HEALTH_REFRESH_MS = 5000
+  const healthCache = { at: 0, value: undefined }
+
   /** The data root the audit tool reads: same discovery as the sphere. */
   const resolveMemoryRoot = () => {
     const { roots, explicit } = memoryRoots(ctx, cfg)
@@ -696,6 +701,33 @@ export function apply(ctx, config) {
       void err
     }
     return limits
+  }
+
+  /**
+   * Memory pressure for the instrument layer: how full MEMORY.md is against
+   * Mnemon's own limit. Cheap (`statSync`) and cached, so the sphere can show
+   * it at poll speed without re-auditing the store.
+   */
+  function memoryHealth() {
+    const now = Date.now()
+    if (healthCache.value && now - healthCache.at < HEALTH_REFRESH_MS) return healthCache.value
+    healthCache.at = now
+    let bytes = 0
+    try {
+      const root = resolveMemoryRoot()
+      if (root) bytes = statSync(join(root, 'runtime', 'MEMORY.md')).size
+    } catch (err) {
+      bytes = 0
+    }
+    const limit = resolveMemoryLimits().memoryLimitBytes || 10240
+    healthCache.value = {
+      memoryBytes: bytes,
+      memoryLimitBytes: limit,
+      memoryRatio: bytes ? Math.round((bytes / limit) * 100) / 100 : 0,
+      errors: counters.errors,
+      subagents: counters.subagents,
+    }
+    return healthCache.value
   }
 
   /**

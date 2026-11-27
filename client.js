@@ -230,6 +230,7 @@ window.__ModuleLoader__.load({
       /* 记忆投影与人格标记：都由 Host 的快照驱动 */
       this.memory = null
       this.persona = null
+      this.health = null
       this.memoryRef = null
       this.memorySlotsCache = null
       this.memoryBornAt = 0
@@ -438,6 +439,8 @@ window.__ModuleLoader__.load({
       var prevMemoryTotal = this.memory && this.memory.ok ? Number(this.memory.total) || 0 : 0
       this.memory = nextMemory
       this.persona = data.persona && typeof data.persona === 'object' ? data.persona : null
+      /* 仪表：记忆容量压力 + 错误/子代理计数，球体用它决定"要不要提醒你" */
+      this.health = data.health && typeof data.health === 'object' ? data.health : null
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
@@ -1054,6 +1057,25 @@ window.__ModuleLoader__.load({
         ctx.arc(cx, cy, r, start, start + span * rate)
         ctx.stroke()
       }
+
+      // 记忆容量压力：外一圈更细的表，超过 85% 才明显发琥珀色
+      var health = this.health
+      var pressure = health ? Math.max(0, Math.min(1, Number(health.memoryRatio) || 0)) : 0
+      if (pressure > 0.01) {
+        var pr = r + 7
+        ctx.lineWidth = 1.6
+        ctx.strokeStyle = rgba(base, 0.08 * alpha)
+        ctx.beginPath()
+        ctx.arc(cx, cy, pr, start, start + span)
+        ctx.stroke()
+        var over = pressure >= 0.85
+        var tint = over ? { r: 255, g: 176, b: 64 } : base
+        ctx.lineWidth = over ? 2.4 : 1.6
+        ctx.strokeStyle = rgba(tint, (over ? 0.6 : 0.3) * alpha)
+        ctx.beginPath()
+        ctx.arc(cx, cy, pr, start, start + span * pressure)
+        ctx.stroke()
+      }
       ctx.restore()
     }
 
@@ -1062,9 +1084,14 @@ window.__ModuleLoader__.load({
       var tools = Number(s.counters.tools) || 0
       var turns = Number(s.counters.turns) || 0
       var memory = this.memory && this.memory.ok ? this.memory : null
+      var health = this.health
+      var pressure = health ? Number(health.memoryRatio) || 0 : 0
       var head = this.persona && this.persona.active ? 'JARVIS  ·  ' : ''
       head += s.running ? 'ACTIVE' : 'STANDBY'
-      if (memory && memory.total > 0) head += '  ·  ' + memory.total + ' MEM'
+      if (memory && memory.total > 0) {
+        head += '  ·  ' + memory.total + ' MEM'
+        if (pressure > 0) head += ' ' + Math.round(pressure * 100) + '%'
+      }
       if (tools > 0) head += '  ·  ' + tools + ' TOOLS'
       if (turns > 0) head += '  ·  ' + turns + ' TURNS'
       var detail = s.activeTools.length ? String(s.activeTools[s.activeTools.length - 1]) : ''
@@ -1083,7 +1110,8 @@ window.__ModuleLoader__.load({
       ctx.textBaseline = 'middle'
       var y = cy + R * 1.03 + 8
       ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
-      ctx.fillStyle = rgba(s.running ? accent : base, (this.dark ? 0.26 : 0.42) * alpha)
+      var headTint = pressure >= 0.85 ? { r: 255, g: 176, b: 64 } : s.running ? accent : base
+      ctx.fillStyle = rgba(headTint, (this.dark ? 0.26 : 0.42) * alpha)
       ctx.fillText(head, cx, y)
       if (detail) {
         ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'

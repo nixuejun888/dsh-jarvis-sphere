@@ -157,6 +157,8 @@ if (realDir) {
   check('real store: totals add up', memory?.total === (memory?.user || 0) + (memory?.memory || 0), [memory?.total, memory?.user, memory?.memory])
   check('real store: slots present', Array.isArray(memory?.slots) && memory.slots.length > 0, memory?.slots?.length)
   check('real store: slots carry no text', Object.keys(memory?.slots?.[0] || {}).sort().join(',') === 'a,f,i,n,s,t', Object.keys(memory?.slots?.[0] || {}).sort().join(','))
+  check('health reports memory pressure', typeof state.body?.health?.memoryRatio === 'number' && state.body.health.memoryRatio >= 0, state.body?.health)
+  check('health carries the limit', typeof state.body?.health?.memoryLimitBytes === 'number' && state.body.health.memoryLimitBytes > 0, state.body?.health?.memoryLimitBytes)
 } else {
   console.log('SKIP real store: no Mnemon data root found')
 }
@@ -165,3 +167,4 @@ const failed = results.filter((r) => !r.ok)
 for (const r of results) console.log((r.ok ? 'PASS ' : 'FAIL ') + r.label + (r.extra === undefined ? '' : '  [' + JSON.stringify(r.extra) + ']'))
 console.log('\n' + (results.length - failed.length) + '/' + results.length + ' checks passed')
 process.exit(failed.length === 0 ? 0 : 1)
+
