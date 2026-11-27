@@ -774,7 +774,7 @@ window.__ModuleLoader__.load({
       if (this.health) {
         var mv = Number(this.health.memoryRatio) || 0
         memoryLevel = mv < 0 ? 0 : mv > 1 ? 1 : mv
-        memFill = 0.62 + 0.58 * memoryLevel
+        memFill = 0.66 + 0.40 * memoryLevel
       }
       var nodeAlpha = (0.26 + 0.4 * lit) * alphaScale * memFill
       var nodeAlphaTier = [0.10, 0.30, 0.62, 1]
@@ -799,7 +799,7 @@ window.__ModuleLoader__.load({
           if (a < 0.006) continue
           ctx.fillStyle = rgba(nodeColorTier[si2], a)
           ctx.beginPath()
-          var radius = nodeSizeTier[si2] * (0.88 + 0.34 * (memFill - 0.62))
+          var radius = nodeSizeTier[si2] * (0.9 + 0.28 * (memFill - 0.66))
           for (var q2 = 0; q2 < bucket.length; q2++) {
             var id = bucket[q2]
             ctx.moveTo(px[id] + radius, py[id])
@@ -1071,6 +1071,12 @@ window.__ModuleLoader__.load({
      * bloom. Nothing forms a closed circle, so the silhouette stays a sphere
      * rather than a dial.
      */
+    /**
+     * Nothing glows outward in normal operation: the sphere stays a clean
+     * silhouette so text laid over it keeps its contrast. Fill is already
+     * encoded in the node dust; this only draws a thin edge line when a
+     * reading crosses its warning line, where a warning wants to be seen.
+     */
     SphereEngine.prototype.drawGaugeGlow = function (ctx, cx, cy, R, base, accent, hi, alpha) {
       var health = this.health
       if (!health) return
@@ -1081,58 +1087,21 @@ window.__ModuleLoader__.load({
       }
       var memory = clamp(health.memoryRatio)
       var pressure = clamp(health.contextRatio)
-      var saved = ctx.globalCompositeOperation
       var clock = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-      var breath = 0.94 + Math.sin(clock / 2600) * 0.06
-
-      /* one crescent: gradient centred off to one side, so its visible part is
-         an arc on that side and fades out across the sphere */
-      var crescent = function (tint, strength, ox, oy, reach) {
-        var gx = cx + ox * R
-        var gy = cy + oy * R
-        var grad = ctx.createRadialGradient(gx, gy, R * 0.62, gx, gy, R * reach)
-        grad.addColorStop(0, rgba(tint, 0))
-        grad.addColorStop(0.80, rgba(tint, strength * 0.10))
-        grad.addColorStop(0.95, rgba(tint, strength))
-        grad.addColorStop(1, rgba(tint, 0))
+      var breath = 0.75 + Math.sin(clock / 1800) * 0.25
+      var edge = function (tint, width, peak) {
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
-        ctx.fillStyle = grad
+        ctx.lineWidth = width
+        ctx.strokeStyle = rgba(tint, peak * alpha * breath)
         ctx.beginPath()
-        ctx.arc(gx, gy, R * reach, 0, Math.PI * 2)
-        ctx.fill()
+        ctx.arc(cx, cy, R * 1.004, 0, Math.PI * 2)
+        ctx.stroke()
         ctx.restore()
       }
-
-      // memory: cool crescent from the upper left, amber once the store is nearly full
-      if (memory > 0.01) {
-        var nearFull = memory >= 0.85
-        var cool = nearFull ? accent : (pal.violet || base)
-        crescent(cool, (0.06 + memory * 0.15) * alpha * breath, -0.30, -0.38, 1.03)
-      }
-      // context: warm crescent from the lower right, red past the warning line
-      if (pressure > 0.01) {
-        var hot = pressure >= 0.85
-        var warm = hot ? (this.alert || accent) : this.mixRgb(pal.violet || base, accent, 0.45 + pressure * 0.35)
-        crescent(warm, (0.03 + pressure * 0.10) * alpha * breath, 0.26, 0.32, 1.01)
-      }
-
-      // core light: the pressure reading, kept soft so the dust stays readable
-      if (pressure > 0.01) {
-        var mood = this.mixRgb(pal.violet || base, this.alert || accent, pressure * 0.7)
-        var core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.9)
-        core.addColorStop(0, rgba(mood, (0.04 + pressure * 0.10) * alpha * breath))
-        core.addColorStop(0.5, rgba(mood, (0.015 + pressure * 0.04) * alpha))
-        core.addColorStop(1, rgba(mood, 0))
-        ctx.save()
-        ctx.globalCompositeOperation = 'lighter'
-        ctx.fillStyle = core
-        ctx.beginPath()
-        ctx.arc(cx, cy, R * 0.9, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.restore()
-      }
-      ctx.globalCompositeOperation = saved
+      // past 85%: a thin ring hugging the silhouette, never a field of light
+      if (memory >= 0.85) edge(accent, 2.0, 0.30)
+      if (pressure >= 0.85) edge(this.alert || accent, 2.4, 0.38)
     }
     /** Pick the gauge style; `arc` keeps the previous look for comparison. */
     SphereEngine.prototype.drawGauge = function (ctx, cx, cy, R, base, accent, hi, alpha) {
