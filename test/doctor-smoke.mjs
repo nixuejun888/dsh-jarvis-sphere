@@ -96,7 +96,7 @@ function byId(report, id) {
   check('diagnostics are in the snapshot', !!report && Array.isArray(report.checks), report?.checks?.length)
   check('healthy host reports ok', report?.status === 'ok', report?.status)
   check('every check carries id + status + detail', report.checks.every((c) => c.id && c.status && c.detail), report.checks.map((c) => c.id))
-  check('the nine expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools', 'detail', 'backup'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
+  check('the ten expected checks are present', ['route', 'persona', 'memory', 'chronicle', 'services', 'caches', 'tools', 'detail', 'scene', 'backup'].every((id) => byId(report, id)), report.checks.map((c) => c.id))
   check('route check names the served path', /\/dsh-jarvis\/state/u.test(byId(report, 'route')?.detail || ''), byId(report, 'route')?.detail)
 
   const doctor = registered.find((definition) => definition.name === 'jarvis_doctor')

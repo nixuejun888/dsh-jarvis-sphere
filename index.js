@@ -61,6 +61,8 @@ const DEFAULTS = {
   report: true,
   /** Event pulses: tool calls and errors leave a short trail on the sphere. */
   pulse: true,
+  /** Scene detection: surface which memories belong to the current work. */
+  scene: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -86,6 +88,16 @@ const RECAP_MAX = 20
 const PULSE_MAX = 12
 /** Pulses older than this are not worth sending. */
 const PULSE_TTL_MS = 30000
+/** A scene stays relevant for this long after it was last touched. */
+const SCENE_TTL_MS = 10 * 60 * 1000
+/** Keyword table: which work this machine usually does. */
+const SCENES = [
+  { id: 'unity', label: 'Unity / 3ds Max', words: [/unity/iu, /3ds\s?max/iu, /maxscript/iu, /\bshader\b/iu] },
+  { id: 'dsh', label: 'DSH 插件', words: [/dsh/iu, /jarvis/iu, /cordis/iu, /插件/iu, /plugin/iu] },
+  { id: 'memory', label: '记忆库', words: [/记忆/iu, /mnemon/iu, /memory\.md/iu, /备份/iu] },
+  { id: 'wecom', label: '企业微信', words: [/企业微信/iu, /wecom/iu, /weixin/iu, /微信/iu] },
+  { id: 'laundry', label: 'laundry-xiaoai', words: [/laundry/iu, /小爱/iu, /米家/iu, /mijia/iu] },
+]
 
 /** Characters of the user message kept as the chronicle label. */
 const CHRONICLE_LABEL_MAX = 80
@@ -580,12 +592,14 @@ export function apply(ctx, config) {
   const recap = { pending: [], recent: [] }
   /** Monotonic event pulses for the sphere: tools and errors only. */
   const pulses = { seq: Date.now(), items: [] }
+  /** Current work scene, if a recent instruction or tool named one. */
+  const scene = { id: '', label: '', at: 0, word: '' }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false, detail: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false, detail: false, scene: false, contextTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -611,6 +625,60 @@ export function apply(ctx, config) {
   }
   loadChronicle()
 
+
+
+  /** Match a sentence or a tool name against the scene table. */
+  function detectScene(input) {
+    if (cfg.scene === false) return ''
+    const text = String(input || '')
+    if (!text) return ''
+    for (const entry of SCENES) {
+      for (const word of entry.words) {
+        if (word.test(text)) {
+          scene.id = entry.id
+          scene.label = entry.label
+          scene.word = String(word.source || '').slice(0, 24)
+          scene.at = Date.now()
+          return entry.id
+        }
+      }
+    }
+    return ''
+  }
+
+  /** Scene hint for the prompt, empty when nothing recent matched. */
+  function scenePromptText() {
+    if (cfg.scene === false) return ''
+    if (!scene.id) return ''
+    if (Date.now() - scene.at > SCENE_TTL_MS) return ''
+    return '当前场景：' + scene.label + '（相关记忆可用 jarvis_context action=find 取回，先看再答）'
+  }
+
+  /** Memory entries that mention the current scene's topic. */
+  function sceneMemories(limit) {
+    const root = resolveMemoryRoot()
+    if (!root) return []
+    let entries = []
+    try {
+      const raw = JSON.parse(readFileSync(join(root, 'runtime', 'memories.json'), 'utf8'))
+      entries = Array.isArray(raw.entries) ? raw.entries : []
+    } catch (err) {
+      return []
+    }
+    const table = SCENES.find((item) => item.id === scene.id)
+    const words = table ? table.words : []
+    const hits = []
+    for (const entry of entries) {
+      const content = String((entry && entry.content) || '')
+      if (!content) continue
+      if (!words.some((word) => word.test(content))) continue
+      hits.push({
+        importance: String((entry && entry.importance) || 'normal'),
+        text: Array.from(clipLabel(content)).slice(0, 80).join(''),
+      })
+    }
+    return hits.slice(0, Math.max(1, limit || 6))
+  }
 
   /** Record one event for the sphere trail; the ring is bounded on purpose. */
   function pushPulse(kind) {
@@ -880,6 +948,7 @@ function parseChronicleLine(line) {
       }
     }
     add('detail', registered.detail ? 'ok' : 'degraded', registered.detail ? 'read-only detail route registered' : 'detail route is not registered; the sphere cannot open its panel')
+    add('scene', cfg.scene === false ? 'skip' : registered.scene && registered.contextTool ? 'ok' : 'degraded', cfg.scene === false ? 'turned off by config' : registered.scene && registered.contextTool ? 'prompt context and jarvis_context are ready' : 'scene hint missing (prompt context or jarvis_context did not register)')
 
     const order = { fail: 2, degraded: 1, ok: 0, skip: -1 }
     let worst = 'ok'
@@ -1078,6 +1147,7 @@ function parseChronicleLine(line) {
   }
 
   function onToolCall(data, sessionId) {
+    if (data && typeof data.name === 'string') detectScene(data.name)
     const now = Date.now()
     touch()
     const name = toolNameOf(data) || 'tool'
@@ -1137,6 +1207,7 @@ function parseChronicleLine(line) {
       if (!held || !held.label) {
         const label = lastUserLabel(session)
         offerRecap(label, sessionId)
+        detectScene(label)
         if (label) {
           chronicle.pending.set(pendingKey, { label, toolsAt: held ? held.toolsAt : (sessionTools.get(pendingKey) || 0) })
           chronicle.diag.labelled += 1
@@ -1210,6 +1281,7 @@ function parseChronicleLine(line) {
       diagnostics: diagnose(false),
       alerts: alertSnapshot(),
       pulses: recentPulses(),
+      scene: scene.id && Date.now() - scene.at <= SCENE_TTL_MS ? { id: scene.id, label: scene.label } : null,
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -2266,6 +2338,40 @@ function parseChronicleLine(line) {
   } catch (err) {
     warn('cannot register the recap tool: ' + String(err && err.message))
   }
+
+  /** Scene hint as runtime prompt context, separate from alerts. */
+  const attachScene = () => {
+    if (cfg.scene === false) return () => {}
+    let prompt = null
+    try {
+      prompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined
+    } catch (err) {
+      prompt = undefined
+    }
+    if (!prompt || typeof prompt.context !== 'function') return () => {}
+    const release = prompt.context({ name: 'jarvis:scene', order: 811, text: () => scenePromptText() })
+    registered.scene = true
+    return () => {
+      registered.scene = false
+      if (typeof release === 'function') {
+        try {
+          release()
+        } catch (err) {
+          void err
+        }
+      }
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachScene, 'jarvis-sphere: scene context')
+    else {
+      const dispose = attachScene()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the scene context: ' + String(err && err.message))
+  }
+
   /** Alerts as runtime prompt context: every step sees what needs saying. */
   const attachAlerts = () => {
     if (cfg.alerts === false) return () => {}
@@ -2396,6 +2502,79 @@ function parseChronicleLine(line) {
     }
   } catch (err) {
     warn('cannot register the chronicle tool: ' + String(err && err.message))
+  }
+
+
+  /** Scene surface: what is the current work, and which memories belong to it. */
+  const attachContextTool = () => {
+    if (cfg.scene === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const definition = {
+      name: 'jarvis_context',
+      description:
+        'Read-only scene context: the work the operator is currently in (detected from recent instructions and tool names) and '
+        + 'the memory entries that mention that topic. action=list reports the scene; action=find returns matching entries.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'find'], description: 'Default list.' },
+          limit: { type: 'integer', minimum: 1, maximum: 20, description: 'How many entries find returns (default 6).' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => {
+          const lines = []
+          if (value.action === 'list') {
+            lines.push(value.scene ? '当前场景：' + value.scene.label + '（' + value.scene.id + '）' : '当前没有识别到场景')
+            return [{ type: 'text', text: lines.join('\n') }]
+          }
+          lines.push('场景：' + String(value.scene ? value.scene.label : '无'))
+          if (!value.entries.length) lines.push('没有匹配的记忆条目')
+          for (const entry of value.entries) lines.push('  [' + entry.importance + '] ' + entry.text)
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      timeoutMs: 15000,
+      execute: async (args) => {
+        const action = String((args && args.action) || 'list')
+        const active = scene.id && Date.now() - scene.at <= SCENE_TTL_MS ? { id: scene.id, label: scene.label } : null
+        if (action === 'list') return { action: 'list', scene: active }
+        return { action: 'find', scene: active, entries: active ? sceneMemories(Number(args && args.limit) || 6) : [] }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.contextTool = true
+      return () => {
+        registered.contextTool = false
+        try {
+          release()
+        } catch (err) {
+          warn('context tool release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_context: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachContextTool, 'jarvis-sphere: context tool')
+    else {
+      const dispose = attachContextTool()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the context tool: ' + String(err && err.message))
   }
 
   /** Read-only doctor: same report as the snapshot, plus one fix per problem. */
