@@ -181,6 +181,14 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 事件闪点（D）：今天在球上留下的痕迹
+
+工具调用与错误会在球面留下会扩散的圆环，约 30 秒淡出——「今天做了什么」不只在 HUD 数字里。
+
+- Host 只记两类：`tool/call` → 紫色环，`agent/error` → 红色环；回合结束不打点；
+- 快照带一个**有界**的最近事件环（最多 12 条、只发 30 秒内的，实测 < 700 B），Client 按单调序号去重，新事件才生成涟漪；
+- 位置由事件序号哈希成球面固定点，同一事件不会乱跳；涟漪随时间扩散变淡；
+- `pulse: false` 整块关掉（Host 不发、Client 不画）。
 ## 可点击球体（C）：点球开只读面板
 
 单击球体（背景区域）打开一个浮层，顶部有七个页签：
@@ -330,17 +338,16 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
-node test/report-smoke.mjs  # 17/17  日报：五段内容、两天不覆盖、read/list、可关闭
-
-node test/recap-smoke.mjs  # 12/12  自动复盘：入队、去重、提醒、confirm/drop、可关闭
-
-node test/chronicle-smoke.mjs  # 37/37  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
-node test/doctor-smoke.mjs  # 32/32  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
+node test/report-smoke.mjs  # 33/33  日报：五段内容、历史日计数与标签、read 读磁盘、非法日、余量、原子写
+node test/recap-smoke.mjs   # 14/14  自动复盘：入队、去重、提醒、confirm/drop、确认后不再入队、可关闭
+node test/chronicle-smoke.mjs # 38/38  编年史：一回合一行、会话隔离、注入块与中文快照过滤、重启恢复、按字节轮换、可关闭
+node test/doctor-smoke.mjs  # 32/32  自检：九通道 + 健康全绿、目录未建、工具拒绝、截断归档、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 node test/writer-smoke.mjs  # 46/46  执行通道：选择器防漂移、四种动作、预演零写入、同毫秒归档去重、失败清理、CRLF 保持、白名单
-
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
-node test/alert-smoke.mjs  # 40/40  提醒：六类阈值、优先级截断与「另有 N 条」、ack 释放与复活、字符串/非数组 id、提示注入、关闭
+node test/alert-smoke.mjs   # 40/40  提醒：六类阈值、优先级截断与「另有 N 条」、ack 释放与复活、字符串/非数组 id、提示注入、关闭
+node test/panel-smoke.mjs   # 23/23  可点击球体：七种 kind、405/HEAD、路径穿越、禁用通道、余量、卸载释放
+node test/pulse-smoke.mjs   # 8/8   事件闪点：工具/错误入环、回合不打点、有界、可关
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
@@ -372,7 +379,6 @@ node test/alert-smoke.mjs  # 40/40  提醒：六类阈值、优先级截断与�
 ## License
 
 MIT
-
 
 
 

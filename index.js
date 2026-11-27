@@ -59,6 +59,8 @@ const DEFAULTS = {
   recap: true,
   /** Daily report written as Markdown under reportsDir. */
   report: true,
+  /** Event pulses: tool calls and errors leave a short trail on the sphere. */
+  pulse: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -80,6 +82,10 @@ const RECAP_FILE = 'review-queue.json'
 const RECAP_PATTERN = /(以后|今后|从现在起|下次|别再|不要再|必须|一定要|永远|记住|我更喜欢|我习惯|禁止)/u
 /** How many queued items are kept. */
 const RECAP_MAX = 20
+/** Pulse ring size carried in the snapshot (small on purpose). */
+const PULSE_MAX = 12
+/** Pulses older than this are not worth sending. */
+const PULSE_TTL_MS = 30000
 
 /** Characters of the user message kept as the chronicle label. */
 const CHRONICLE_LABEL_MAX = 80
@@ -572,6 +578,8 @@ export function apply(ctx, config) {
   const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0, types: Object.create(null) } }
   /** Instructions that sound durable: queued so a human can confirm them. */
   const recap = { pending: [], recent: [] }
+  /** Monotonic event pulses for the sphere: tools and errors only. */
+  const pulses = { seq: 0, items: [] }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
@@ -602,6 +610,22 @@ export function apply(ctx, config) {
     chronicle.days = aggregateChronicle(readTailLines(chronicleFile, 0))
   }
   loadChronicle()
+
+
+  /** Record one event for the sphere trail; the ring is bounded on purpose. */
+  function pushPulse(kind) {
+    if (cfg.pulse === false) return
+    pulses.seq += 1
+    pulses.items.push({ s: pulses.seq, k: kind, t: Date.now() })
+    if (pulses.items.length > PULSE_MAX) pulses.items.splice(0, pulses.items.length - PULSE_MAX)
+  }
+
+  /** Pulses worth sending: recent ones only. */
+  function recentPulses() {
+    if (cfg.pulse === false) return []
+    const floor = Date.now() - PULSE_TTL_MS
+    return pulses.items.filter((item) => item.t >= floor).map((item) => ({ s: item.s, k: item.k, t: item.t }))
+  }
 
   /** Load the review queue once at apply. */
   function loadRecap() {
@@ -1119,7 +1143,10 @@ function parseChronicleLine(line) {
         }
       }
     }
-    if (type === 'tool/call') onToolCall(data, sessionId)
+    if (type === 'tool/call') {
+      pushPulse('tool')
+      onToolCall(data, sessionId)
+    }
     else if (type === 'tool/result') onToolResult(data)
     else if (type === 'turn/end') {
       counters.turns += 1
@@ -1182,6 +1209,7 @@ function parseChronicleLine(line) {
       chronicle: chronicleSummary(),
       diagnostics: diagnose(false),
       alerts: alertSnapshot(),
+      pulses: recentPulses(),
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -1252,6 +1280,7 @@ function parseChronicleLine(line) {
   on('agent/error', () => {
     counters.errors += 1
     noteError()
+    pushPulse('error')
   })
 
   // Seed the running state so a page loaded mid-turn is active immediately.

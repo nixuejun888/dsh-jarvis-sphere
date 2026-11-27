@@ -244,6 +244,9 @@ window.__ModuleLoader__.load({
       this.persona = null
       this.health = null
       this.chronicle = null
+      this.alerts = null
+      this.pulses = []
+      this.lastPulse = 0
       this.memoryRef = null
       this.memorySlotsCache = null
       this.memoryBornAt = 0
@@ -297,6 +300,64 @@ window.__ModuleLoader__.load({
       this.px = null
     }
 
+
+
+    /** Deterministic surface point for one pulse, so a repeated id lands twice. */
+    SphereEngine.prototype.pulsePoint = function (seq) {
+      var n = Math.abs(Math.floor(seq)) || 1
+      var u = ((n * 2654435761) % 1000) / 1000
+      var v = ((n * 40503) % 1000) / 1000
+      var theta = u * Math.PI * 2
+      var phi = Math.acos(2 * v - 1)
+      return { x: Math.sin(phi) * Math.cos(theta), y: Math.cos(phi), z: Math.sin(phi) * Math.sin(theta) }
+    }
+
+    /** Keep only fresh ripples: the trail should read as "recent", not history. */
+    SphereEngine.prototype.adoptPulses = function (list) {
+      var now = Date.now()
+      var newest = this.lastPulse || 0
+      for (var i = 0; i < list.length; i += 1) {
+        var item = list[i]
+        if (!item || typeof item.s !== 'number' || item.s <= (this.lastPulse || 0)) continue
+        if (item.s > newest) newest = item.s
+        this.pulses.push({ s: item.s, k: String(item.k || 'tool'), at: now, p: this.pulsePoint(item.s) })
+      }
+      this.lastPulse = newest
+      var cutoff = now - 30000
+      var kept = []
+      for (var j = 0; j < this.pulses.length; j += 1) {
+        if (this.pulses[j].at >= cutoff) kept.push(this.pulses[j])
+      }
+      this.pulses = kept
+    }
+
+    /** Draw the trail: expanding rings on the sphere, fading over ~30 s. */
+    SphereEngine.prototype.drawPulses = function (ctx, project, R, alpha) {
+      if (!this.pulses || !this.pulses.length) return
+      var now = Date.now()
+      var saved = ctx.globalCompositeOperation
+      ctx.globalCompositeOperation = 'lighter'
+      for (var i = 0; i < this.pulses.length; i += 1) {
+        var pulse = this.pulses[i]
+        var age = (now - pulse.at) / 30000
+        if (age < 0 || age > 1) continue
+        var point = project(pulse.p.x, pulse.p.y, pulse.p.z * 0.6)
+        var fade = 1 - age
+        var tint = pulse.k === 'error' ? (this.alert || { r: 255, g: 120, b: 120 }) : (this.palette && this.palette.violet) || { r: 120, g: 200, b: 255 }
+        var grow = 0.35 + age * 2.2
+        var radius = R * 0.055 * grow
+        ctx.lineWidth = Math.max(0.8, 1.6 * fade)
+        ctx.strokeStyle = rgba(tint, (pulse.k === 'error' ? 0.62 : 0.46) * fade * alpha)
+        ctx.beginPath()
+        ctx.arc(point[0], point[1], radius, 0, TAU)
+        ctx.stroke()
+        ctx.fillStyle = rgba(tint, (pulse.k === 'error' ? 0.35 : 0.2) * fade * alpha)
+        ctx.beginPath()
+        ctx.arc(point[0], point[1], Math.max(0.8, R * 0.008 * fade), 0, TAU)
+        ctx.fill()
+      }
+      ctx.globalCompositeOperation = saved
+    }
 
     /** Screen-space sphere geometry, mirroring draw()'s centre and radius. */
     SphereEngine.prototype.sphereGeometry = function () {
@@ -674,6 +735,7 @@ window.__ModuleLoader__.load({
       this.chronicle = data.chronicle && typeof data.chronicle === 'object' ? data.chronicle : null
       this.diagnostics = data.diagnostics && typeof data.diagnostics === 'object' ? data.diagnostics : null
       this.alerts = data.alerts && typeof data.alerts === 'object' ? data.alerts : null
+      this.adoptPulses(Array.isArray(data.pulses) ? data.pulses : [])
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
@@ -1269,7 +1331,8 @@ window.__ModuleLoader__.load({
 
       // ---- HUD（不过泛光，保证清晰） ----
       if (cfg.showHud && alphaScale > 0.15) {
-        this.drawGauge(ctx, cx, cy, R, base, accent, hi, alphaScale)
+        this.drawPulses(ctx, project, R, alphaScale)
+      this.drawGauge(ctx, cx, cy, R, base, accent, hi, alphaScale)
         this.drawHud(ctx, cx, cy, R, base, accent, alphaScale)
       }
     }
