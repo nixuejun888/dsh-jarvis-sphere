@@ -556,7 +556,7 @@ export function apply(ctx, config) {
    * Per-session pending turn: a label and tool baseline belong to the session
    * that produced them, never to whichever session ends a turn first.
    */
-  const chronicle = { pending: new Map(), days: new Map() }
+  const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0 } }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
@@ -698,7 +698,7 @@ function parseChronicleLine(line) {
     } else if (existsSync(chronicleDir)) {
       try {
         accessSync(chronicleDir, constants.W_OK)
-        add('chronicle', 'ok', 'writable ' + chronicleDir)
+        add('chronicle', 'ok', 'writable ' + chronicleDir + ' · labels ' + chronicle.diag.labelled + '/' + chronicle.diag.users + ' user messages')
       } catch (err) {
         add('chronicle', 'fail', 'cannot write ' + chronicleDir + ': ' + String(err && err.message))
       }
@@ -796,6 +796,8 @@ function parseChronicleLine(line) {
       todayTools: todayValue.tools,
       trackedDays: chronicle.days.size,
       days,
+      users: chronicle.diag.users,
+      labelled: chronicle.diag.labelled,
     }
   }
 
@@ -1009,8 +1011,20 @@ function parseChronicleLine(line) {
     } else if (type === 'user/message') {
       counters.userMessages += 1
       note('user', '')
+      /* A harness-injected block and the human's own words can arrive as two
+         user messages; an injected one must not blank a label already captured
+         (the first version did exactly that, which is why live labels were
+         empty). Keep the last non-empty text, and count what arrived so the
+         doctor can show whether labels are actually reaching the file. */
       const pendingKey = String(sessionId || '')
-      chronicle.pending.set(pendingKey, { label: messageTextOf(data), toolsAt: sessionTools.get(pendingKey) || 0 })
+      const label = messageTextOf(data)
+      chronicle.diag.users += 1
+      if (label) chronicle.diag.labelled += 1
+      const previous = chronicle.pending.get(pendingKey)
+      chronicle.pending.set(pendingKey, {
+        label: label || (previous ? previous.label : ''),
+        toolsAt: previous ? previous.toolsAt : (sessionTools.get(pendingKey) || 0),
+      })
     } else if (type === 'turn/error' || type === 'error') {
       counters.errors += 1
       note('error', '')

@@ -251,6 +251,34 @@ const userMessage = (text) => ({ type: 'user/message', data: { role: 'user', con
   check('every recovered record is listed', value.recent.length === 3, value.recent.length)
   check('recovered records keep their labels', value.recent.map((r) => r.u).join('|') === '第一条|第二条|第一条', value.recent.map((r) => r.u))
 }
+// --- 10. an injected user message must not blank a captured label ---
+{
+  const order = join(root, 'label-order')
+  const { ctx, listeners } = makeCtx()
+  apply(ctx, { nodeCount: 300, chronicleDir: order })
+  const human = { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: '把球体的记忆改成光点' }] } }
+  const injected = { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: 'Time sampled while preparing turn 1, step 1' }] } }
+  const onlyInjected = { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: '<system-reminder>none</system-reminder>' }] } }
+
+  emit(listeners, 'session/event', { id: 's10' }, human)
+  emit(listeners, 'session/event', { id: 's10' }, injected)
+  emit(listeners, 'session/event', { id: 's10' }, { type: 'turn/end', data: { turn: 1 } })
+  const first = JSON.parse(readFileSync(join(order, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[0])
+  check('a later injected message does not blank the label', first.u === '把球体的记忆改成光点', first.u)
+
+  // the opposite order works too
+  emit(listeners, 'session/event', { id: 's11' }, injected)
+  emit(listeners, 'session/event', { id: 's11' }, human)
+  emit(listeners, 'session/event', { id: 's11' }, { type: 'turn/end', data: { turn: 2 } })
+  const second = JSON.parse(readFileSync(join(order, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[1])
+  check('the label survives either arrival order', second.u === '把球体的记忆改成光点', second.u)
+
+  // an injected-only turn records no label, and the counters show it
+  emit(listeners, 'session/event', { id: 's12' }, onlyInjected)
+  emit(listeners, 'session/event', { id: 's12' }, { type: 'turn/end', data: { turn: 3 } })
+  const third = JSON.parse(readFileSync(join(order, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[2])
+  check('an injected-only turn has no label', third.u === '', third.u)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
