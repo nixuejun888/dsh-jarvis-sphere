@@ -18,3 +18,5 @@
         # personaText: '覆盖内置的 JARVIS 人设正文'
         memoryDirs: []
         memorySlots: 0
+        keeper: true
+

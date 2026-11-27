@@ -47,6 +47,25 @@ JARVIS 语气与工作习惯，而不是只在这个会话里临时生效。它�
 - 关掉人格：行配置 `persona: false`；换掉正文：`personaText: "..."`。
 - 槽位数：`memorySlots`（0 = 跟随 `nodeCount`）；记忆根：`memoryDirs: [...]`。
 
+## 记忆管家：只读审计工具
+
+光点让你**看见**记忆，`jarvis_memory_review` 让你**打理**记忆。它是 JARVIS 自己的工具（Host 注册，模型可直接调用），
+扫本机 Mnemon 存储根后只回报建议，不改任何一条：
+
+| 检查项 | 说明 |
+| --- | --- |
+| 容量 | MEMORY.md / USER.md 的字节数与占用比（对 10 KB 上限），85% 以上先提示合并 |
+| 完全重复 | 去掉空白、大小写、标点后文本相同的条目组 |
+| 近重复 | `max(Jaccard, 包含度)` ≥ 0.62 的条目组，附相似度与摘要；这条阈值是拿真实记忆库标定的（被重述过的规则约 0.81，不相关条目都在 0.40 以下） |
+| 陈旧可归档 | 超过 120 天且非 critical 的条目 |
+| 过长 | 超过 900 字的条目，建议拆成「规则 + 详情」两条 |
+
+**边界写死在工具里**：合并、删除、归档一概不做。它给的是候选清单，动手要你点头。
+
+```bash
+node test/keeper-smoke.mjs  # 21/21
+```
+
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -117,6 +136,7 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         personaText: ''    # 覆盖内置人设正文
         memoryDirs: []     # 额外探的记忆根目录，默认取 dsh-mnemon 的 dataDir
         memorySlots: 0     # 记忆槽位数；0 = 跟随 nodeCount（上限 1400）
+        keeper: true       # 注册只读审计工具 jarvis_memory_review
 ```
 
 改完在插件页重启该 bundle（或重启 DSH）。
@@ -166,5 +186,6 @@ node test/memory-smoke.mjs  # 21/21  记忆聚类（5,000 条不截断）+ 存�
 ## License
 
 MIT
+
 
 

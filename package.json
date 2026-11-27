@@ -29,6 +29,7 @@
     "index.js",
     "client.js",
     "cordis.patch.yml",
+    "keeper.js",
     "locale",
     "docs",
     "icon.svg",
@@ -46,3 +47,4 @@
     }
   }
 }
+

@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { registerKeeper } from './keeper.js'
 
 /** Tunables the row's `config` may override. */
 const DEFAULTS = {
@@ -31,6 +32,8 @@ const DEFAULTS = {
   memoryDirs: [],
   /** Hash slots for memory clusters; 0 follows `nodeCount`. */
   memorySlots: 0,
+  /** Register the read-only `jarvis_memory_review` tool. */
+  keeper: true,
 }
 
 /** System-prompt section that carries the persona; a global registration. */
@@ -667,6 +670,27 @@ export function apply(ctx, config) {
     }
   } catch (err) {
     warn('cannot register the persona section: ' + String(err && err.message))
+  }
+
+  /** The data root the audit tool reads: same discovery as the sphere. */
+  const resolveMemoryRoot = () => {
+    const { roots, explicit } = memoryRoots(ctx, cfg)
+    return pickMemoryRoot(roots, explicit).root
+  }
+
+  /**
+   * Register the read-only memory audit tool. It only reports; any actual
+   * merge, archive or delete stays a decision the user makes.
+   */
+  const attachKeeper = () => (cfg.keeper === false ? () => {} : registerKeeper(ctx, resolveMemoryRoot))
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachKeeper, 'jarvis-sphere: memory keeper')
+    else {
+      const dispose = attachKeeper()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the memory keeper tool: ' + String(err && err.message))
   }
 
   return () => {
