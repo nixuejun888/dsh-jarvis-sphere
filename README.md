@@ -180,6 +180,16 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 自动复盘（A）：可疑规则先进队列
+
+你说的话里如果带「以后／记住／必须／不要再／下次／从现在起／我更喜欢」这类词，插件不会直接写记忆，而是**先记进待复盘队列**，并注入一条提醒；我看到后会问你「要不要收录」。
+
+- 队列文件：`~/.dsh/jarvis-sphere/review-queue.json`（最多 20 条，同文本去重）；
+- 工具 `jarvis_recap`：`list` 看队列、`confirm` 表示已收录、`drop` 丢弃；
+- 队列非空时告警通道会多一条 `N 条待复盘`（在 HUD/提示里可见）；
+- `recap: false` 关掉整套（不建队列、不注册工具、不告警）。
+
+边界：**它只提议，不落盘**。真正的记忆写入仍要经 `jarvis_memory_apply` 或 `mnemon_runtime_memory`，且由你确认。
 ## 沉浸模式（档 1）：球当主界面
 
 按 `Ctrl+Shift+J` 切换。开启后：
@@ -289,6 +299,8 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
+node test/recap-smoke.mjs  # 12/12  自动复盘：入队、去重、提醒、confirm/drop、可关闭
+
 node test/chronicle-smoke.mjs  # 37/37  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 node test/doctor-smoke.mjs  # 32/32  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入

@@ -55,6 +55,8 @@ const DEFAULTS = {
   alerts: true,
   /** jarvis_memory_apply: writes to MEMORY.md/USER.md with a snapshot. */
   memoryWrite: true,
+  /** Auto-recap: queue durable-sounding instructions for review. */
+  recap: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -69,6 +71,13 @@ const ALERT_CONTEXT = 'jarvis:alerts'
 const ALERT_CONTEXT_ORDER = 810
 /** How many alerts one step may carry before the rest wait. */
 const ALERT_CONTEXT_MAX = 4
+
+/** Queue file for instructions that look durable and deserve review. */
+const RECAP_FILE = 'review-queue.json'
+/** Phrases that usually mean "remember this rule". */
+const RECAP_PATTERN = /(以后|今后|从现在起|下次|别再|不要再|必须|一定要|永远|记住|我更喜欢|我习惯|禁止)/u
+/** How many queued items are kept. */
+const RECAP_MAX = 20
 
 /** Characters of the user message kept as the chronicle label. */
 const CHRONICLE_LABEL_MAX = 80
@@ -559,12 +568,14 @@ export function apply(ctx, config) {
    * that produced them, never to whichever session ends a turn first.
    */
   const chronicle = { pending: new Map(), days: new Map(), diag: { users: 0, labelled: 0, types: Object.create(null) } }
+  /** Instructions that sound durable: queued so a human can confirm them. */
+  const recap = { pending: [] }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -589,6 +600,61 @@ export function apply(ctx, config) {
     chronicle.days = aggregateChronicle(readTailLines(chronicleFile, 0))
   }
   loadChronicle()
+
+  /** Load the review queue once at apply. */
+  function loadRecap() {
+    try {
+      const raw = readFileSync(join(chronicleDir, RECAP_FILE), 'utf8')
+      const parsed = JSON.parse(raw)
+      recap.pending = Array.isArray(parsed.pending) ? parsed.pending.slice(-RECAP_MAX) : []
+    } catch (err) {
+      recap.pending = []
+    }
+  }
+
+  /** Persist the queue; a failure is reported but never fatal. */
+  function saveRecap() {
+    try {
+      mkdirSync(chronicleDir, { recursive: true })
+      writeFileSync(join(chronicleDir, RECAP_FILE), JSON.stringify({ pending: recap.pending }, null, 2))
+      return true
+    } catch (err) {
+      warn('cannot write the recap queue: ' + String(err && err.message))
+      return false
+    }
+  }
+
+  /**
+   * Queue an instruction that sounds durable. It only proposes: the memory is
+   * written after a human confirms, never by the heuristic itself.
+   */
+  function offerRecap(text, sessionId) {
+    if (cfg.recap === false) return false
+    const label = clipLabel(text)
+    if (label.length < 4) return false
+    if (!RECAP_PATTERN.test(label)) return false
+    if (recap.pending.some((item) => item.text === label)) return false
+    recap.pending.push({ t: new Date().toISOString(), s: String(sessionId || '').slice(0, 12), text: label.slice(0, 200) })
+    recap.pending = recap.pending.slice(-RECAP_MAX)
+    saveRecap()
+    return true
+  }
+
+  /** Remove confirmed or dropped items by 1-based index. */
+  function resolveRecap(action, ids) {
+    const wanted = Array.isArray(ids) ? ids.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 1 && n <= recap.pending.length) : []
+    const targets = wanted.length ? wanted : recap.pending.map((item, index) => index + 1)
+    const removed = []
+    const sorted = targets.slice().sort((a, b) => b - a)
+    for (const index of sorted) {
+      removed.push(recap.pending[index - 1])
+      recap.pending.splice(index - 1, 1)
+    }
+    saveRecap()
+    return { action, resolved: removed, remaining: recap.pending.length }
+  }
+
+  loadRecap()
 
 /**
  * Parse one chronicle line. A writer that lost its trailing newline can glue
@@ -755,6 +821,7 @@ function parseChronicleLine(line) {
       { name: 'backup', ok: registered.backup, disabled: cfg.backup === false },
       { name: 'alerts', ok: registered.alertTool && (registered.alerts || cfg.alerts === false), disabled: cfg.alerts === false },
       { name: 'memoryWrite', ok: registered.memoryWriter, disabled: cfg.memoryWrite === false },
+      { name: 'recap', ok: registered.recapTool, disabled: cfg.recap === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
@@ -841,7 +908,10 @@ function parseChronicleLine(line) {
       out.push({ id: 'doctor', level: 'warn', text: '自检 FAIL：' + broken.join(', ') + '（jarvis_doctor 看修法）' })
     }
     if (cfg.backup !== false) {
-      const backup = backupReport()
+      if (recap.pending.length) {
+      out.push({ id: 'recap', level: 'info', text: recap.pending.length + ' 条待复盘（说「收录」我就处理）' })
+    }
+    const backup = backupReport()
       if (!backup.latest) {
         out.push({ id: 'backup', level: 'info', text: '还没有备份（jarvis_backup create）' })
       } else if (!backup.ok) {
@@ -1031,6 +1101,7 @@ function parseChronicleLine(line) {
       const held = chronicle.pending.get(pendingKey)
       if (!held || !held.label) {
         const label = lastUserLabel(session)
+        offerRecap(label, sessionId)
         if (label) {
           chronicle.pending.set(pendingKey, { label, toolsAt: held ? held.toolsAt : (sessionTools.get(pendingKey) || 0) })
           chronicle.diag.labelled += 1
@@ -1730,6 +1801,80 @@ function parseChronicleLine(line) {
     }
   } catch (err) {
     warn('cannot register the alert tool: ' + String(err && err.message))
+  }
+
+  /** Review queue surface: list what the heuristic caught, then confirm or drop. */
+  const attachRecapTool = () => {
+    if (cfg.recap === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const render = (value) => {
+      if (value.action === 'list') {
+        if (!value.count) return '没有待复盘的指令'
+        return ['待复盘 ' + value.count + ' 条：'].concat(value.pending.map((item, index) => '  #' + (index + 1) + ' ' + item.text)).concat(['收录：先写记忆，再 jarvis_recap action=confirm；不要：action=drop']).join('\n')
+      }
+      const lines = ['已处理 ' + value.resolved.length + ' 条']
+      if (value.remaining) lines.push('队列还剩 ' + value.remaining + ' 条')
+      return lines.join('\n')
+    }
+    const definition = {
+      name: 'jarvis_recap',
+      description:
+        'Auto-recap queue: instructions the operator said that sound durable (以后/记住/必须/不要再…). The plugin only ' +
+        'queues them and raises an alert; this tool lists them and removes the ones a human confirmed or dropped. ' +
+        'It never writes a memory itself.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'confirm', 'drop'], description: 'Default list.' },
+          ids: { type: 'array', items: { type: 'integer', minimum: 1 }, description: '1-based queue indexes; empty means all.' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 15000,
+      execute: async (args) => {
+        const action = String((args && args.action) || 'list')
+        if (action === 'confirm' || action === 'drop') {
+          const result = resolveRecap(action, args && args.ids)
+          return { action, ...result }
+        }
+        return { action: 'list', count: recap.pending.length, pending: recap.pending.slice() }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.recapTool = true
+      return () => {
+        registered.recapTool = false
+        try {
+          release()
+        } catch (err) {
+          warn('recap tool release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_recap: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachRecapTool, 'jarvis-sphere: recap tool')
+    else {
+      const dispose = attachRecapTool()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the recap tool: ' + String(err && err.message))
   }
   /** Alerts as runtime prompt context: every step sees what needs saying. */
   const attachAlerts = () => {

@@ -26,5 +26,6 @@
         backupKeep: 7
         alerts: true
         memoryWrite: true
+        recap: true
         # chronicleDir: 'C:\\绝对路径'
 
