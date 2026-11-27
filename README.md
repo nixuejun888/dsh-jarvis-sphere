@@ -66,14 +66,26 @@ JARVIS 语气与工作习惯，而不是只在这个会话里临时生效。它�
 node test/keeper-smoke.mjs  # 25/25
 ```
 
-## 仪表：记忆压力
+## 仪表：记忆 / 上下文 / 待办 / 错误
 
-球体不只会动，它报健康。HUD 首行现在带记忆占用：`JARVIS · ACTIVE · 12 MEM 73% · 1 TOOLS`。
+球体不只会动，它报健康。HUD 首行是
+`JARVIS · ACTIVE · 14 MEM 77% · CTX 68% · 2 TASKS · 4 TOOLS`，告警（`!N ERR`）排在最前。
 
-- 底部环形表外多一圈更细的表，按 `MEMORY.md 已用 / 上限` 画弧；
-- 占用到 **85%** 时，这一圈与 HUD 文字一起转琥珀色——先提醒你去合并，而不是等写不进去；
-- 上限读 `dsh-mnemon` 的真实配置（默认 MEMORY.md 10 KB / USER.md 4 KB），不是写死的数字；
-- 只有一次 `stat` + 5 秒缓存，轮询不会重新审计整个库。
+| 通道 | 数据源 | 渲染 |
+| --- | --- | --- |
+| 记忆容量 | `MEMORY.md 已用 / dsh-mnemon 真实上限`（一次 stat，5 秒缓存） | 球体**上方**一圈琥珀弧，≥85% 转琥珀并染色 HUD |
+| 上下文压力 | `tokenMeter.contextPressure(session)`，取**最忙会话**的占用率（2 秒缓存） | 再外一圈紫弧，≥85% 转红；比例 clamp 到 1 |
+| 待办 | `schedule.list({active:true})`（30 秒缓存，带 10 秒 inflight 超时） | `N TASKS`；没工具在跑时第二行显示 `NEXT <多久后>` |
+| 近期错误 | `agent/error` 时间戳（15 分钟窗口，4096 上限） | `!N ERR` 并把整行染成告警色（主题相关） |
+
+实现约束（都是被复查打回来过的地方）：
+
+- 两条压力弧画在球体**上方**，不压底部文字；半径按 `R*1.045 / R*1.07` 取比例，窗口再小也不重叠；
+- HUD 按优先级拼装（ERR → MEM → CTX → TASKS → TOOLS），超出预算就丢末尾，不出现 `...`；
+- 快照只带 Client 真正读的 9 个 cfg 键，`personaText` 之类的配置不上线；
+- 错误窗口一次扫描 + 一次 `splice` 剪枝，并在写入处就压到 4096，页面关久了重开也不会卡住 Host；
+- 事件窗口（流式帧 / 工具调用 / 错误）都有 4096 硬上限；
+- 任何服务缺失或抛错都只让对应通道降级为 0，绝不让 `apply` 抛错。
 
 ## 画了什么
 
@@ -163,7 +175,9 @@ Host 半边的单元断言：
 ```bash
 node test/host-smoke.mjs    # 22/22  工具计数、收尾、轮次、405、卸载清路由
 node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启用、旧路由占位、备用路径
-node test/memory-smoke.mjs  # 23/23  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 压力仪表
+node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
+node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
+node test/health-smoke.mjs  # 17/17  仪表：缓存 TTL、比例语义、错误剪枝代价、快照尺寸、服务全挂、TDZ
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

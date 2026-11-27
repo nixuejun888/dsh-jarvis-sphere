@@ -159,12 +159,73 @@ if (realDir) {
   check('real store: slots carry no text', Object.keys(memory?.slots?.[0] || {}).sort().join(',') === 'a,f,i,n,s,t', Object.keys(memory?.slots?.[0] || {}).sort().join(','))
   check('health reports memory pressure', typeof state.body?.health?.memoryRatio === 'number' && state.body.health.memoryRatio >= 0, state.body?.health)
   check('health carries the limit', typeof state.body?.health?.memoryLimitBytes === 'number' && state.body.health.memoryLimitBytes > 0, state.body?.health?.memoryLimitBytes)
+  check('health reports context pressure', typeof state.body?.health?.contextRatio === 'number', state.body?.health?.contextRatio)
+  check('health reports scheduled tasks', typeof state.body?.health?.schedulesActive === 'number', state.body?.health?.schedulesActive)
+  check('health reports recent errors', typeof state.body?.health?.recentErrors === 'number', state.body?.health?.recentErrors)
 } else {
   console.log('SKIP real store: no Mnemon data root found')
 }
 
+
+// ---- health instrument wiring: context pressure, schedules, recent errors ----
+{
+  const dir2 = mkdtempSync(join(tmpdir(), 'jarvis-health-'))
+  mkdirSync(join(dir2, 'runtime'), { recursive: true })
+  writeFileSync(join(dir2, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [
+    { content: 'health probe entry', target: 'memory', importance: 'normal', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  ] }))
+  writeFileSync(join(dir2, 'runtime', 'MEMORY.md'), 'M'.repeat(1000))
+
+  const routes2 = new Map()
+  const listeners2 = new Map()
+  const ctx2 = {
+    on(name, fn) {
+      if (!listeners2.has(name)) listeners2.set(name, [])
+      listeners2.get(name).push(fn)
+      return () => {}
+    },
+    effect(execute) { return execute() || (() => {}) },
+    get(name) {
+      if (name === 'config') return { resolveConfigByPackage: () => ({ dataDir: dir2 }) }
+      if (name === 'systemPrompt') return { section: () => () => {} }
+      if (name === 'tools') return { register: () => () => {} }
+      if (name === 'agents') return { list: () => [{ session: { id: 's1' } }, { session: { id: 's2' } }] }
+      if (name === 'tokenMeter') {
+        return { contextPressure: (session) => (session.id === 's2' ? { pressureTokens: 800000, contextWindow: 1000000 } : { pressureTokens: 1000, contextWindow: 1000000 }) }
+      }
+      if (name === 'schedule') {
+        return { list: async () => ({ items: [{ scheduledAt: '2026-12-07T01:00:00.000Z' }, { scheduledAt: '2026-12-01T01:00:00.000Z' }], total: 2 }) }
+      }
+      return undefined
+    },
+    webServer: { register(route) { routes2.set(route.kind + ' ' + route.path, route); return () => routes2.delete(route.kind + ' ' + route.path) } },
+    agents: { list: () => [] },
+    logger: { warn() {} },
+  }
+  apply(ctx2, { nodeCount: 300 })
+  const read = () => {
+    const route = routes2.get('exact /dsh-jarvis/state')
+    let payload = ''
+    route.handler({ method: 'GET' }, { statusCode: 0, setHeader() {}, end(body) { payload += body } })
+    return JSON.parse(payload)
+  }
+  const first = read()
+  check('health: busiest session sets context ratio', first.health?.contextRatio === 0.8, first.health?.contextRatio)
+  check('health: context tokens reported', first.health?.contextTokens === 800000 && first.health?.contextWindow === 1000000, [first.health?.contextTokens, first.health?.contextWindow])
+  check('health: live session count', first.health?.sessions === 2, first.health?.sessions)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const second = read()
+  check('health: schedules read from the service', second.health?.schedulesActive === 2, second.health?.schedulesActive)
+  check('health: next due task is the earliest', second.health?.nextDueAt === '2026-12-01T01:00:00.000Z', second.health?.nextDueAt)
+  for (const fn of listeners2.get('agent/error') || []) fn({ agent: { id: 's1' } })
+  const third = read()
+  check('health: recent errors counted', third.health?.recentErrors === 1, third.health?.recentErrors)
+  rmSync(dir2, { recursive: true, force: true })
+}
 const failed = results.filter((r) => !r.ok)
 for (const r of results) console.log((r.ok ? 'PASS ' : 'FAIL ') + r.label + (r.extra === undefined ? '' : '  [' + JSON.stringify(r.extra) + ']'))
 console.log('\n' + (results.length - failed.length) + '/' + results.length + ' checks passed')
 process.exit(failed.length === 0 ? 0 : 1)
+
+
 

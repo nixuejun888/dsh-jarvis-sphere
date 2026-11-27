@@ -304,6 +304,7 @@ window.__ModuleLoader__.load({
       var dark = rgb ? luminance(rgb) < 0.5 : true
       this.dark = dark
       this.blend = dark ? 'screen' : 'multiply'
+      this.alert = dark ? { r: 255, g: 120, b: 120 } : { r: 170, g: 30, b: 30 }
       if (this.canvas.style.mixBlendMode !== this.blend) this.canvas.style.mixBlendMode = this.blend
       this.palette = PALETTES[dark ? 'dark' : 'light']
       this.accent = ACCENT[dark ? 'dark' : 'light']
@@ -1061,19 +1062,39 @@ window.__ModuleLoader__.load({
       // 记忆容量压力：外一圈更细的表，超过 85% 才明显发琥珀色
       var health = this.health
       var pressure = health ? Math.max(0, Math.min(1, Number(health.memoryRatio) || 0)) : 0
+      /* 压力弧在球体上方，避免压到底部 HUD 文字；半径按 R 比例，窗口再小也不重叠 */
+      var topStart = -Math.PI / 2 - span / 2
       if (pressure > 0.01) {
-        var pr = r + 7
+        var pr = R * 1.045
         ctx.lineWidth = 1.6
         ctx.strokeStyle = rgba(base, 0.08 * alpha)
         ctx.beginPath()
-        ctx.arc(cx, cy, pr, start, start + span)
+        ctx.arc(cx, cy, pr, topStart, topStart + span)
         ctx.stroke()
         var over = pressure >= 0.85
-        var tint = over ? { r: 255, g: 176, b: 64 } : base
+        var tint = over ? accent : base
         ctx.lineWidth = over ? 2.4 : 1.6
         ctx.strokeStyle = rgba(tint, (over ? 0.6 : 0.3) * alpha)
         ctx.beginPath()
-        ctx.arc(cx, cy, pr, start, start + span * pressure)
+        ctx.arc(cx, cy, pr, topStart, topStart + span * pressure)
+        ctx.stroke()
+      }
+
+      // 上下文压力：再外一圈，最忙的会话离压缩还有多远
+      var contextRatio = health ? Math.max(0, Math.min(1, Number(health.contextRatio) || 0)) : 0
+      if (contextRatio > 0.01) {
+        var cr = R * 1.07
+        ctx.lineWidth = 1.4
+        ctx.strokeStyle = rgba(base, 0.07 * alpha)
+        ctx.beginPath()
+        ctx.arc(cx, cy, cr, topStart, topStart + span)
+        ctx.stroke()
+        var hot = contextRatio >= 0.85
+        var ctxTint = hot ? this.alert : (this.palette && this.palette.violet) || base
+        ctx.lineWidth = hot ? 2.2 : 1.4
+        ctx.strokeStyle = rgba(ctxTint, (hot ? 0.62 : 0.34) * alpha)
+        ctx.beginPath()
+        ctx.arc(cx, cy, cr, topStart, topStart + span * contextRatio)
         ctx.stroke()
       }
       ctx.restore()
@@ -1082,19 +1103,36 @@ window.__ModuleLoader__.load({
     SphereEngine.prototype.drawHud = function (ctx, cx, cy, R, base, accent, alpha) {
       var s = this.state
       var tools = Number(s.counters.tools) || 0
-      var turns = Number(s.counters.turns) || 0
       var memory = this.memory && this.memory.ok ? this.memory : null
       var health = this.health
-      var pressure = health ? Number(health.memoryRatio) || 0 : 0
-      var head = this.persona && this.persona.active ? 'JARVIS  ·  ' : ''
-      head += s.running ? 'ACTIVE' : 'STANDBY'
+      var pressure = health ? Math.min(1, Math.max(0, Number(health.memoryRatio) || 0)) : 0
+      var contextRatio = health ? Math.min(1, Math.max(0, Number(health.contextRatio) || 0)) : 0
+      var schedules = health ? Number(health.schedulesActive) || 0 : 0
+      var errors = health ? Number(health.recentErrors) || 0 : 0
+      var nextDue = health && health.nextDueAt ? Date.parse(health.nextDueAt) : 0
+      var head = this.persona && this.persona.active ? 'JARVIS' : ''
+      var headParts = []
+      if (head) headParts.push(head)
+      headParts.push(s.running ? 'ACTIVE' : 'STANDBY')
+      /* 告警排在最前：窗口窄时丢末尾的 TASKS/TOOLS，绝不丢错误提示 */
+      if (errors > 0) headParts.push('!' + errors + ' ERR')
       if (memory && memory.total > 0) {
-        head += '  ·  ' + memory.total + ' MEM'
-        if (pressure > 0) head += ' ' + Math.round(pressure * 100) + '%'
+        headParts.push(memory.total + ' MEM' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
       }
-      if (tools > 0) head += '  ·  ' + tools + ' TOOLS'
-      if (turns > 0) head += '  ·  ' + turns + ' TURNS'
+      if (contextRatio > 0) headParts.push('CTX ' + Math.round(contextRatio * 100) + '%')
+      if (schedules > 0) headParts.push(schedules + ' TASKS')
+      if (tools > 0) headParts.push(tools + ' TOOLS')
+      head = ''
+      for (var hp = 0; hp < headParts.length; hp++) {
+        var joined = head ? head + '  ·  ' + headParts[hp] : headParts[hp]
+        if (head && joined.length > 96) break
+        head = joined
+      }
       var detail = s.activeTools.length ? String(s.activeTools[s.activeTools.length - 1]) : ''
+      if (!detail && nextDue > 0) {
+        var minsLeft = Math.max(0, Math.round((nextDue - Date.now()) / 60000))
+        detail = minsLeft < 60 ? 'NEXT ' + minsLeft + ' MIN' : minsLeft < 1440 ? 'NEXT ' + Math.round(minsLeft / 60) + ' H' : 'NEXT ' + Math.round(minsLeft / 1440) + ' D'
+      }
       if (!detail && memory && memory.ok) {
         /* 没有工具在跑时，底下一行报记忆库存：用户画像 / 工作记忆 / 空间 / 文档 */
         var parts = []
@@ -1110,8 +1148,14 @@ window.__ModuleLoader__.load({
       ctx.textBaseline = 'middle'
       var y = cy + R * 1.03 + 8
       ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
-      var headTint = pressure >= 0.85 ? { r: 255, g: 176, b: 64 } : s.running ? accent : base
-      ctx.fillStyle = rgba(headTint, (this.dark ? 0.26 : 0.42) * alpha)
+      var worst = Math.max(pressure, contextRatio)
+      var headTint = errors > 0
+        ? this.alert
+        : worst >= 0.85
+          ? accent
+          : s.running ? accent : base
+      var headAlpha = errors > 0 ? (this.dark ? 0.55 : 0.6) : (this.dark ? 0.26 : 0.42)
+      ctx.fillStyle = rgba(headTint, headAlpha * alpha)
       ctx.fillText(head, cx, y)
       if (detail) {
         ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
@@ -1180,3 +1224,8 @@ window.__ModuleLoader__.load({
     }
   },
 })
+
+
+
+
+

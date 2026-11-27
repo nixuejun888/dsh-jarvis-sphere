@@ -57,6 +57,9 @@ const PERSONA_TEXT = [
 const MEMORY_REFRESH_MS = 3000
 /** Importance → rank used by the Client half for size and glow. */
 const IMPORTANCE_RANK = { critical: 2, normal: 1, low: 0 }
+/** Hard cap for the per-instance event windows (stream frames, tool calls, errors). */
+const WINDOW_MAX = 4096
+const ERROR_MAX = 4096
 /** Fixed ticks on the document ring; archives stay legible at any size. */
 const DOC_TICKS = 96
 
@@ -399,6 +402,8 @@ export function apply(ctx, config) {
   let lastToolName = ''
   let lastToolAt = 0
   let lastActivityAt = 0
+  /** Recent agent-error timestamps; bounded by ERROR_MAX. */
+  const errorAt = []
   /** Cached memory projection; refreshed at most every MEMORY_REFRESH_MS. */
   const memoryCache = { at: 0, value: undefined }
 
@@ -425,6 +430,7 @@ export function apply(ctx, config) {
     const name = toolNameOf(data) || 'tool'
     const id = callIdOf(data) || 'call-' + now + '-' + Math.random().toString(36).slice(2, 7)
     toolAt.push(now)
+    if (toolAt.length > WINDOW_MAX) toolAt.splice(0, toolAt.length - WINDOW_MAX)
     counters.tools += 1
     lastToolName = name
     lastToolAt = now
@@ -460,6 +466,7 @@ export function apply(ctx, config) {
     } else if (type === 'turn/error' || type === 'error') {
       counters.errors += 1
       note('error', '')
+
     }
   }
 
@@ -490,8 +497,18 @@ export function apply(ctx, config) {
       recent: recent.slice(-6).map((r) => ({ k: r.k, l: r.l })),
       memory: projectMemory(ctx, cfg, memoryCache),
       persona: { name: 'JARVIS', active: personaOn, chars: personaText.length },
-      health: memoryHealth(),
-      cfg,
+      health: health(),
+      cfg: {
+        enabled: cfg.enabled,
+        nodeCount: cfg.nodeCount,
+        intensity: cfg.intensity,
+        opacity: cfg.opacity,
+        showHud: cfg.showHud,
+        glow: cfg.glow,
+        color: cfg.color,
+        offsetX: cfg.offsetX,
+        offsetY: cfg.offsetY,
+      },
     }
   }
 
@@ -528,6 +545,7 @@ export function apply(ctx, config) {
 
   on('agent/assistant-stream', () => {
     streamAt.push(Date.now())
+    if (streamAt.length > WINDOW_MAX) streamAt.splice(0, streamAt.length - WINDOW_MAX)
     touch()
   })
 
@@ -543,6 +561,7 @@ export function apply(ctx, config) {
 
   on('agent/error', () => {
     counters.errors += 1
+    noteError()
   })
 
   // Seed the running state so a page loaded mid-turn is active immediately.
@@ -676,6 +695,10 @@ export function apply(ctx, config) {
   /** How long the health probe is reused. */
   const HEALTH_REFRESH_MS = 5000
   const healthCache = { at: 0, value: undefined }
+  /** Live-session context pressure, recomputed on a slower clock than polling. */
+  const contextCache = { at: 0, value: { contextRatio: 0, contextTokens: 0, contextWindow: 0, sessions: 0 } }
+  /** Active scheduled tasks; the service is async, so the snapshot reads a cache. */
+  const scheduleCache = { at: 0, inflight: false, inflightAt: 0, gen: 0, value: { schedulesActive: 0, nextDueAt: '' } }
 
   /** The data root the audit tool reads: same discovery as the sphere. */
   const resolveMemoryRoot = () => {
@@ -724,10 +747,138 @@ export function apply(ctx, config) {
       memoryBytes: bytes,
       memoryLimitBytes: limit,
       memoryRatio: bytes ? Math.round((bytes / limit) * 100) / 100 : 0,
-      errors: counters.errors,
-      subagents: counters.subagents,
     }
     return healthCache.value
+  }
+
+  /**
+   * Context pressure of the busiest live session. The token meter answers per
+   * session, so the sphere reports the worst one: that is the session about to
+   * need compaction.
+   */
+  function contextHealth() {
+    const now = Date.now()
+    if (now - contextCache.at < 2000) return contextCache.value
+    contextCache.at = now
+    const value = { contextRatio: 0, contextTokens: 0, contextWindow: 0, sessions: 0 }
+    let agents = []
+    let meter
+    try {
+      const agentsService = typeof ctx.get === 'function' ? ctx.get('agents') : undefined
+      agents = agentsService && typeof agentsService.list === 'function' ? agentsService.list() : []
+    } catch (err) {
+      agents = []
+    }
+    try {
+      meter = typeof ctx.get === 'function' ? ctx.get('tokenMeter') : undefined
+    } catch (err) {
+      meter = undefined
+    }
+    for (const agent of Array.isArray(agents) ? agents : []) {
+      const session = agent && agent.session
+      if (!session) continue
+      value.sessions += 1
+      if (!meter || typeof meter.contextPressure !== 'function') continue
+      try {
+        const pressure = meter.contextPressure(session) || {}
+        const tokens = Number(pressure.pressureTokens) || 0
+        const window = Number(pressure.contextWindow) || 0
+        if (!window || tokens <= 0) continue
+        const ratio = tokens / window
+        if (ratio > value.contextRatio) {
+          value.contextRatio = ratio
+          value.contextTokens = tokens
+          value.contextWindow = window
+        }
+      } catch (err) {
+        void err
+      }
+    }
+    value.contextRatio = Math.min(1, Math.round(value.contextRatio * 100) / 100)
+    contextCache.value = value
+    return value
+  }
+
+  /**
+   * Refresh the scheduled-task cache; failures keep the last known value.
+   * A read that never settles must not freeze the channel: after 10 s the
+   * attempt is abandoned and the next probe starts a new one. Each attempt
+   * takes a generation token so a late settlement cannot clear a newer one.
+   */
+  function refreshSchedules() {
+    let service
+    try {
+      service = typeof ctx.get === 'function' ? ctx.get('schedule') : undefined
+    } catch (err) {
+      service = undefined
+    }
+    const now = Date.now()
+    if (!service || typeof service.list !== 'function') {
+      scheduleCache.at = now
+      return
+    }
+    if (scheduleCache.inflight) {
+      if (now - scheduleCache.inflightAt < 10000) return
+      scheduleCache.inflight = false
+    }
+    scheduleCache.inflight = true
+    scheduleCache.inflightAt = now
+    const token = scheduleCache.gen + 1
+    scheduleCache.gen = token
+    Promise.resolve()
+      .then(() => service.list({ active: true, limit: 50 }))
+      .then((page) => {
+        if (scheduleCache.gen !== token) return
+        const items = page && Array.isArray(page.items) ? page.items : []
+        let nextAt = ''
+        for (const item of items) {
+          const at = item && item.scheduledAt
+          if (typeof at === 'string' && at && (!nextAt || at < nextAt)) nextAt = at
+        }
+        scheduleCache.value = { schedulesActive: Number(page && page.total) || items.length, nextDueAt: nextAt }
+      })
+      .catch((err) => {
+        void err
+      })
+      .then(() => {
+        if (scheduleCache.gen !== token) return
+        scheduleCache.inflight = false
+        scheduleCache.at = Date.now()
+      })
+  }
+
+  /**
+   * Active tasks: refreshed every 30 s, and immediately when an attempt looks
+   * stuck past its 10 s budget.
+   */
+  function scheduleHealth() {
+    const now = Date.now()
+    const stale = now - scheduleCache.at > 30000
+    const stuck = scheduleCache.inflight && now - scheduleCache.inflightAt > 10000
+    if (stale || stuck) refreshSchedules()
+    return scheduleCache.value
+  }
+
+  /** Record one error tick, bounded so a closed page cannot grow the backlog. */
+  function noteError() {
+    errorAt.push(Date.now())
+    if (errorAt.length > ERROR_MAX) errorAt.splice(0, errorAt.length - ERROR_MAX)
+  }
+
+  /**
+   * Errors seen in the last 15 minutes. One scan plus one splice: per-hit
+   * shift() over a large backlog would stall the Host event loop.
+   */
+  function recentErrors() {
+    const floor = Date.now() - 15 * 60 * 1000
+    let drop = 0
+    while (drop < errorAt.length && errorAt[drop] < floor) drop += 1
+    if (drop > 0) errorAt.splice(0, drop)
+    return errorAt.length
+  }
+
+  function health() {
+    return Object.assign({}, memoryHealth(), contextHealth(), scheduleHealth(), { recentErrors: recentErrors() })
   }
 
   /**
@@ -758,3 +909,7 @@ export function apply(ctx, config) {
     activeTools.clear()
   }
 }
+
+
+
+
