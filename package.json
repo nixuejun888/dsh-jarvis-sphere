@@ -3,14 +3,17 @@
   "version": "1.0.1",
   "private": true,
   "type": "module",
-  "description": "贾维斯风格球形神经元背景：节点、连线与能量脉冲由当前任务的真实执行数据驱动（运行状态、模型流式速率、工具调用），整层穿透点击不影响操作。",
+  "description": "贾维斯球：全息神经元球 + 记忆地图 + 操作员。球转速/亮度/脉冲随任务真实执行数据变化，球面每颗光点是一条真实记忆（位置固定、按类型着色、按重要度与新鲜度呼吸），并往会话注入 JARVIS 人格 + 9 个工具（记忆审计/归档备份/编年史/日报/自检/场景/提醒）。",
   "author": "nixuejun888",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
-    "visualization",
     "jarvis",
+    "visualization",
+    "memory",
+    "assistant",
+    "hud",
     "canvas"
   ],
   "license": "MIT",
@@ -50,5 +53,3 @@
     }
   }
 }
-
-

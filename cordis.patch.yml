@@ -30,7 +30,7 @@
         report: true
         pulse: true
         scene: true
-        stage: true
+        stage: false
         # gauge: glow   # glow（默认）或 arc（旧弧线）
         # chronicleDir: 'C:\\绝对路径'
 
