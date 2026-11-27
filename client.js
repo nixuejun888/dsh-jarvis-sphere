@@ -31,7 +31,13 @@ window.__ModuleLoader__.load({
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
       'html.jvs-stage [data-jvs-side]{opacity:0.62;transition:opacity 200ms ease;}',
       'html.jvs-stage [data-jvs-side]:hover{opacity:1;}',
-      'html.jvs-ball body{background:transparent !important;}',
+      'html.jvs-ball,html.jvs-ball body{background:rgb(1,2,3) !important;}',
+      'html.jvs-ball body *{visibility:hidden !important;}',
+      'html.jvs-ball canvas,html.jvs-ball canvas *{visibility:visible !important;}',
+      'html.jvs-ball [data-jvs-chat],html.jvs-ball [data-jvs-chat] *{visibility:visible !important;}',
+      'html.jvs-ball [data-jvs-open],html.jvs-ball [data-jvs-open] *{visibility:visible !important;}',
+      'html.jvs-ball .jvs-mode-pill,html.jvs-ball .jvs-drawer-btn,html.jvs-ball .jvs-dock-btn,html.jvs-ball .jvs-drag{visibility:visible !important;}',
+      'html.jvs-ball [data-jvs-chat]{background:rgba(6,9,16,0.96) !important;left:0 !important;right:0 !important;bottom:0 !important;top:auto !important;width:100% !important;max-width:none !important;height:300px !important;transform:none !important;border-radius:0 !important;border-left:none !important;border-right:none !important;border-bottom:none !important;overflow-y:auto !important;}',
       'html.jvs-ball [data-jvs-side],html.jvs-ball [data-jvs-rail]{border-radius:14px;}',
       'html.jvs-ball .jvs-mode-pill{top:28px;left:50%;right:auto;transform:translateX(-50%);}',
       'html.jvs-ball .jvs-drawer-btn.jvs-left{left:6px;top:44%;}',
@@ -67,6 +73,10 @@ window.__ModuleLoader__.load({
     ].join('')
 
     /* 调色板：深色主题发光，浅色主题换深青配合 multiply */
+    var BALL_SPHERE = 860
+    var BALL_HEIGHT = 1180
+    var BALL_DOCK = 300
+
     var PALETTES = {
       dark: {
         cyan: { r: 64, g: 220, b: 255 },
@@ -659,6 +669,8 @@ window.__ModuleLoader__.load({
       if (this.ball) {
         try {
           this.setFull(true)
+          var chatOpen = document.querySelector('[data-jvs-chat]')
+          if (chatOpen) chatOpen.setAttribute('data-jvs-open', '1')
           if (!document.querySelector('.jvs-drag')) {
             var drag = document.createElement('div')
             drag.className = 'jvs-drag'
@@ -858,9 +870,14 @@ window.__ModuleLoader__.load({
     }
 
     SphereEngine.prototype.fullGeometry = function () {
+      if (!this.full) return null
       var w = this.w || window.innerWidth
       var hgt = this.h || window.innerHeight
-      if (!this.full) return null
+      if (this.ball) {
+        /* the window region is a full-width circle followed by the dock strip */
+        var side = Math.min(w, BALL_SPHERE)
+        return { cx: side / 2, cy: side / 2, R: side / 2 - 2 }
+      }
       var radius = Math.min(w, hgt) * 0.40
       var cy = Math.min(hgt - radius - 12, Math.max(radius + 12, hgt * 0.40))
       return { cx: w * 0.5, cy: cy, R: radius }
