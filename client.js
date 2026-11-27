@@ -710,6 +710,7 @@ window.__ModuleLoader__.load({
           event.stopPropagation()
           self.setFull(false)
           self.setStage(false)
+          self.setImmersive(false)
         }
         document.body.appendChild(exit)
       }
@@ -1007,6 +1008,25 @@ window.__ModuleLoader__.load({
       this.hilite = HILITE[dark ? 'dark' : 'light']
     }
 
+    /**
+     * 版式只在首次同步时当默认值，之后以快捷键与 localStorage 为准。
+     * 之前这里每轮轮询都按 cfg 纠正一次，用户刚切过去的模式下一拍就被按回来。
+     */
+    SphereEngine.prototype.syncLayoutFromConfig = function (cfg) {
+      if (this.layoutSynced) return
+      this.layoutSynced = true
+      var storedStage = null
+      var storedFull = null
+      try {
+        storedStage = window.localStorage.getItem('jarvis:stage')
+        storedFull = window.localStorage.getItem('jarvis:full')
+      } catch (err) {
+        void err
+      }
+      if (typeof cfg.stage === 'boolean' && storedStage === null) this.setStage(cfg.stage)
+      if (typeof cfg.full === 'boolean' && storedFull === null) this.setFull(cfg.full)
+    }
+
     SphereEngine.prototype.applyConfig = function (cfg) {
       if (!cfg || typeof cfg !== 'object') return
       if (typeof cfg.nodeCount === 'number' && cfg.nodeCount !== this.cfg.nodeCount) {
@@ -1018,8 +1038,7 @@ window.__ModuleLoader__.load({
       if (typeof cfg.opacity === 'number') this.cfg.opacity = cfg.opacity
       if (typeof cfg.showHud === 'boolean') this.cfg.showHud = cfg.showHud
       if (typeof cfg.gauge === 'string') this.cfg.gauge = cfg.gauge
-      if (typeof cfg.stage === 'boolean' && cfg.stage !== !!this.stage) this.setStage(cfg.stage)
-      if (typeof cfg.full === 'boolean' && cfg.full !== !!this.full) this.setFull(cfg.full)
+      this.syncLayoutFromConfig(cfg)
       if (typeof cfg.glow === 'boolean') this.cfg.glow = cfg.glow
       if (typeof cfg.color === 'string') this.cfg.color = cfg.color
       if (typeof cfg.offsetX === 'number') this.cfg.offsetX = cfg.offsetX
