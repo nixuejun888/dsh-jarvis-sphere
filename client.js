@@ -280,6 +280,7 @@ window.__ModuleLoader__.load({
       this.cometEmbers = []
       this.cometBurst = null
       this.pendingComet = true
+      this.goldMix = 0
       this.lastUserMessages = -1
 
       this.immersive = false
@@ -1329,7 +1330,7 @@ window.__ModuleLoader__.load({
           // white-hot flash: fast, bright, gone
           var flashAge = Math.min(1, bAge / 0.28)
           if (flashAge < 1) {
-            var flashR = R * (0.18 + 0.55 * flashAge)
+            var flashR = R * (0.06 + 0.18 * flashAge)
             var fg = ctx.createRadialGradient(bx, by, 0, bx, by, flashR)
             fg.addColorStop(0, rgba('#ffffff', (1 - flashAge) * 0.95))
             fg.addColorStop(0.28, rgba(hi, (1 - flashAge) * 0.8))
@@ -1343,7 +1344,7 @@ window.__ModuleLoader__.load({
           // soft expanding halo: several translucent discs, no hard edge
           var haloP = Math.min(1, bAge / 0.9)
           for (var hh = 0; hh < 3; hh += 1) {
-            var hr = R * (0.22 + 0.52 * haloP) * (1 + hh * 0.16)
+            var hr = R * (0.07 + 0.17 * haloP) * (1 + hh * 0.16)
             var ha = (1 - haloP) * (0.16 - hh * 0.045) * alphaScale
             if (ha <= 0.002) continue
             var hg2 = ctx.createRadialGradient(bx, by, hr * 0.72, bx, by, hr)
@@ -1362,7 +1363,7 @@ window.__ModuleLoader__.load({
           for (var b = 0; b < COUNT2; b += 1) {
             var bh = (b * 0.6180339887) % 1
             var bang = bh * TAU + (b % 5) * 0.31
-            var bdist = R * (0.12 + 0.92 * ((b * 0.4142135624) % 1)) * shardEase
+            var bdist = R * (0.04 + 0.31 * ((b * 0.4142135624) % 1)) * shardEase
             var ba = Math.max(0, 1 - bAge / 1.5) * (0.85 - 0.5 * bh) * alphaScale
             if (ba <= 0.004) continue
             var bx2 = bx + Math.cos(bang) * bdist
@@ -1456,6 +1457,9 @@ window.__ModuleLoader__.load({
 
       var s = this.state
       var cfg = this.cfg
+      var goldTarget = s.running ? 1 : 0
+      var goldStep = Math.min(1, Math.max(0, dt) * 0.9)
+      this.goldMix = this.goldMix + (goldTarget - this.goldMix) * goldStep
       var target =
         (s.running ? 0.5 : 0.09) +
         Math.min(0.5, s.streamRate / 9) +
@@ -1522,6 +1526,11 @@ window.__ModuleLoader__.load({
       var base = pal[cfg.color] || pal.cyan
       var accent = this.accent || ACCENT.dark
       var hi = this.hilite || HILITE.dark
+      var gold = this.goldMix || 0
+      if (gold > 0.002) {
+        base = mix(base, accent, gold * 0.85)
+        hi = mix(hi, { r: 255, g: 250, b: 232 }, gold * 0.55)
+      }
       var energy = this.energy
       var lit = Math.min(1.3, energy)
       // 全息闪烁：极轻微的亮度抖动
