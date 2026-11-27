@@ -20,4 +20,6 @@
         memoryDirs: []
         memorySlots: 0
         keeper: true
+        chronicle: true
+        # chronicleDir: 'C:\\绝对路径'
 

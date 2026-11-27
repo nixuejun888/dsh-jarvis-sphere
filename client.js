@@ -231,6 +231,7 @@ window.__ModuleLoader__.load({
       this.memory = null
       this.persona = null
       this.health = null
+      this.chronicle = null
       this.memoryRef = null
       this.memorySlotsCache = null
       this.memoryBornAt = 0
@@ -442,6 +443,7 @@ window.__ModuleLoader__.load({
       this.persona = data.persona && typeof data.persona === 'object' ? data.persona : null
       /* 仪表：记忆容量压力 + 错误/子代理计数，球体用它决定"要不要提醒你" */
       this.health = data.health && typeof data.health === 'object' ? data.health : null
+      this.chronicle = data.chronicle && typeof data.chronicle === 'object' ? data.chronicle : null
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
@@ -1120,6 +1122,8 @@ window.__ModuleLoader__.load({
         headParts.push(memory.total + ' MEM' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
       }
       if (contextRatio > 0) headParts.push('CTX ' + Math.round(contextRatio * 100) + '%')
+      var todayTurns = this.chronicle ? Number(this.chronicle.todayTurns) || 0 : 0
+      if (todayTurns > 0) headParts.push(todayTurns + ' TODAY')
       if (schedules > 0) headParts.push(schedules + ' TASKS')
       if (tools > 0) headParts.push(tools + ' TOOLS')
       head = ''

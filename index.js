@@ -8,7 +8,7 @@
  * owner-only HTTP route and animates the sphere from that snapshot.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -36,7 +36,95 @@ const DEFAULTS = {
   memorySlots: 0,
   /** Register the read-only `jarvis_memory_review` tool. */
   keeper: true,
+  /** Write a daily chronicle line on every turn end. */
+  chronicle: true,
+  /** Chronicle directory; empty uses `~/.dsh/jarvis-sphere`. */
+  chronicleDir: '',
 }
+
+/** Chronicle file name inside the chronicle directory. */
+const CHRONICLE_FILE = 'chronicle.jsonl'
+/** Rotate the chronicle once it grows past this size (synchronous, rare). */
+const CHRONICLE_MAX_BYTES = 512 * 1024
+/** Lines kept when rotating. */
+const CHRONICLE_KEEP_LINES = 2000
+/** Characters of the user message kept as the chronicle label. */
+const CHRONICLE_LABEL_MAX = 80
+
+/** Local calendar day key, e.g. 2026-11-27. */
+function dayKey(now) {
+  const d = new Date(now)
+  const pad = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+}
+
+/** Local YYYY-MM-DD HH:mm for a stored ISO timestamp; empty when unparsable. */
+function localStamp(iso) {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return dayKey(d.getTime()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+}
+
+/** One flat, clipped label; control characters never reach the file or a render. */
+function clipLabel(text) {
+  const flat = String(text || '')
+    .replace(/\s+/gu, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')
+    .trim()
+  /* Truncate by code point so a surrogate pair is never split. */
+  return Array.from(flat).slice(0, CHRONICLE_LABEL_MAX).join('')
+}
+
+/** Last `keep` non-empty lines of a file, or [] when it is missing. */
+function readTailLines(file, keep) {
+  try {
+    const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line.trim())
+    return keep > 0 ? lines.slice(-keep) : lines
+  } catch (err) {
+    return []
+  }
+}
+
+/**
+ * Keep only the newest lines that fit `budgetBytes` (and `limit` lines), so a
+ * rotation is bounded by bytes rather than by a line count alone.
+ */
+function keepNewestByBytes(lines, budgetBytes, limit) {
+  const kept = []
+  let bytes = 0
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]
+    const size = Buffer.byteLength(line, 'utf8') + 1
+    if (kept.length >= limit) break
+    if (bytes + size > budgetBytes && kept.length > 0) break
+    bytes += size
+    kept.push(line)
+  }
+  return kept.reverse()
+}
+
+/** Harness-injected text blocks are context, not something the user said. */
+const INJECTED_LABEL = /^(<system-reminder>|Time sampled while preparing|\[MNEMON\]|MNEMON RUNTIME)/u
+
+/**
+ * The human's own words from a recorded user message, clipped. Injected
+ * reminder blocks are skipped: the chronicle should read like a conversation
+ * log, not like a dump of harness scaffolding.
+ */
+function messageTextOf(message) {
+  if (!message || typeof message !== 'object') return ''
+  const content = Array.isArray(message.content) ? message.content : []
+  let last = ''
+  for (const block of content) {
+    if (!block || block.type !== 'text' || typeof block.text !== 'string') continue
+    const text = block.text.trim()
+    if (!text || INJECTED_LABEL.test(text)) continue
+    last = text
+  }
+  return last ? clipLabel(last) : ''
+}
+
 
 /** System-prompt section that carries the persona; a global registration. */
 const PERSONA_SECTION = 'jarvis:persona'
@@ -437,6 +525,126 @@ export function apply(ctx, config) {
   /** Cached memory projection; refreshed at most every MEMORY_REFRESH_MS. */
   const memoryCache = { at: 0, value: undefined }
 
+  /**
+   * Chronicle: one JSON line per finished turn, so a day can be replayed later.
+   * It stores a clipped user label, never the assistant transcript, and the
+   * file is rotated by size so years of use stay bounded.
+   */
+  const chronicleDir = String(cfg.chronicleDir || '').trim() || join(homedir(), '.dsh', 'jarvis-sphere')
+  const chronicleFile = join(chronicleDir, CHRONICLE_FILE)
+  /**
+   * Per-session pending turn: a label and tool baseline belong to the session
+   * that produced them, never to whichever session ends a turn first.
+   */
+  const chronicle = { pending: new Map(), days: new Map() }
+
+  /** Aggregate every line the file holds (bounded by the rotation budget). */
+  function aggregateChronicle(lines) {
+    const days = new Map()
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line)
+        if (!record || typeof record.d !== 'string') continue
+        const day = days.get(record.d) || { turns: 0, tools: 0 }
+        day.turns += 1
+        day.tools += Number(record.tools) || 0
+        days.set(record.d, day)
+      } catch (err) {
+        void err
+      }
+    }
+    return days
+  }
+
+  /**
+   * Load the whole (bounded) file once at apply, so a busy day's count survives
+   * a restart exactly instead of being clipped to the last N lines.
+   */
+  function loadChronicle() {
+    if (cfg.chronicle === false) return
+    chronicle.days = aggregateChronicle(readTailLines(chronicleFile, 0))
+  }
+  loadChronicle()
+
+  /** Append one finished turn; failures are reported but never fatal. */
+  function recordTurn(sessionId, origin) {
+    if (cfg.chronicle === false) return
+    const key = String(sessionId || '')
+    const pending = chronicle.pending.get(key)
+    chronicle.pending.delete(key)
+    /* A delegated child's turns are work, not "what we did today". */
+    if (origin === 'subagent') return
+    const now = Date.now()
+    const day = dayKey(now)
+    const tools = pending ? Math.max(0, counters.tools - pending.toolsAt) : 0
+    const record = {
+      t: new Date(now).toISOString(),
+      d: day,
+      s: key.slice(0, 12),
+      u: pending ? pending.label : '',
+      tools,
+    }
+    const dayCount = chronicle.days.get(day) || { turns: 0, tools: 0 }
+    dayCount.turns += 1
+    dayCount.tools += tools
+    chronicle.days.set(day, dayCount)
+    try {
+      mkdirSync(chronicleDir, { recursive: true })
+      appendFileSync(chronicleFile, JSON.stringify(record) + '\n')
+      if (statSync(chronicleFile).size > CHRONICLE_MAX_BYTES) {
+        const kept = keepNewestByBytes(
+          readTailLines(chronicleFile, 0),
+          Math.floor(CHRONICLE_MAX_BYTES * 0.8),
+          CHRONICLE_KEEP_LINES,
+        )
+        const temp = chronicleFile + '.' + String(process.pid) + '.tmp'
+        try {
+          writeFileSync(temp, kept.join('\n') + '\n')
+          renameSync(temp, chronicleFile)
+        } finally {
+          try {
+            if (existsSync(temp)) unlinkSync(temp)
+          } catch (err) {
+            void err
+          }
+        }
+      }
+    } catch (err) {
+      warn('chronicle write failed: ' + String(err && err.message))
+    }
+  }
+
+  /** Compact view for the snapshot and the tool: today plus recent days. */
+  function chronicleSummary() {
+    const today = dayKey(Date.now())
+    const days = [...chronicle.days.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .slice(0, 7)
+      .map(([day, value]) => ({ day, turns: value.turns, tools: value.tools }))
+    const todayValue = chronicle.days.get(today) || { turns: 0, tools: 0 }
+    return {
+      todayTurns: todayValue.turns,
+      todayTools: todayValue.tools,
+      trackedDays: chronicle.days.size,
+      days,
+    }
+  }
+
+  /** Recent chronicle lines, newest first, for the read-only tool. */
+  function chronicleLines(limit) {
+    const lines = readTailLines(chronicleFile, limit)
+    const out = []
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line)
+        if (record && typeof record.d === 'string') out.push(record)
+      } catch (err) {
+        void err
+      }
+    }
+    return out.reverse()
+  }
+
   /** 任何真实活动（流式帧、工具调用、会话追加）都刷新一次活跃时间。 */
   function touch() {
     lastActivityAt = Date.now()
@@ -478,7 +686,7 @@ export function apply(ctx, config) {
     }
   }
 
-  function handleSessionEvent(event) {
+  function handleSessionEvent(event, sessionId, origin) {
     const type = event && event.type
     if (typeof type !== 'string' || !type) return
     const data = event && event.data && typeof event.data === 'object' ? event.data : {}
@@ -487,12 +695,14 @@ export function apply(ctx, config) {
     else if (type === 'turn/end') {
       counters.turns += 1
       note('turn', '')
+      recordTurn(sessionId, origin)
     } else if (type === 'assistant/message') {
       counters.messages += 1
       note('message', '')
     } else if (type === 'user/message') {
       counters.userMessages += 1
       note('user', '')
+      chronicle.pending.set(String(sessionId || ''), { label: messageTextOf(data), toolsAt: counters.tools })
     } else if (type === 'turn/error' || type === 'error') {
       counters.errors += 1
       note('error', '')
@@ -528,6 +738,7 @@ export function apply(ctx, config) {
       memory: projectMemory(ctx, cfg, memoryCache),
       persona: { name: 'JARVIS', active: personaOn, chars: personaText.length, source: persona.source, version: personaVersion },
       health: health(),
+      chronicle: chronicleSummary(),
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -580,9 +791,10 @@ export function apply(ctx, config) {
   })
 
   on('session/event', (session, event) => {
-    void session
     touch()
-    handleSessionEvent(event)
+    const id = session && session.id ? String(session.id) : ''
+    const origin = session && session.header ? session.header.origin : undefined
+    handleSessionEvent(event, id, origin)
   })
 
   on('subagent/start', () => {
@@ -924,6 +1136,72 @@ export function apply(ctx, config) {
     }
   } catch (err) {
     warn('cannot register the memory keeper tool: ' + String(err && err.message))
+  }
+
+  /**
+   * Register the read-only `jarvis_chronicle` tool: today's count plus the
+   * recent daily lines, newest first. It never writes and never edits.
+   */
+  const attachChronicle = () => {
+    if (cfg.chronicle === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const definition = {
+      name: 'jarvis_chronicle',
+      description:
+        'Read-only daily chronicle of this machine: turns and tool calls per day plus the clipped label of each finished '
+        + 'turn. Use it for "what did we do today / this week". It never writes, edits or deletes anything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 200, description: 'How many recent turns to list (default 20).' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => {
+          const lines = []
+          const summary = value && value.summary ? value.summary : { todayTurns: 0, todayTools: 0, days: [] }
+          lines.push('编年史（只读）· 今天 ' + summary.todayTurns + ' 轮 / ' + summary.todayTools + ' 次工具 · ' + (summary.days || []).length + ' 天有记录')
+          for (const day of summary.days || []) lines.push('  ' + day.day + '  ' + day.turns + ' 轮 · ' + day.tools + ' 工具')
+          const recent = value && Array.isArray(value.recent) ? value.recent : []
+          if (recent.length) {
+            lines.push('最近 ' + recent.length + ' 轮：')
+            for (const record of recent) {
+              const label = clipLabel(record.u || '').slice(0, 60)
+              lines.push('  ' + (localStamp(record.t) || '-') + '  ' + (label || '(无标签)'))
+            }
+          }
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      timeoutMs: 10000,
+      execute: async (args) => {
+        const limit = Math.max(1, Math.min(200, Number(args && args.limit) || 20))
+        return { summary: chronicleSummary(), recent: chronicleLines(limit) }
+      },
+    }
+    try {
+      return tools.register(definition) || (() => {})
+    } catch (err) {
+      warn('cannot register jarvis_chronicle: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachChronicle, 'jarvis-sphere: chronicle tool')
+    else {
+      const dispose = attachChronicle()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the chronicle tool: ' + String(err && err.message))
   }
 
   return () => {

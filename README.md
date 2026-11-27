@@ -95,6 +95,19 @@ node test/keeper-smoke.mjs  # 25/25
 - 事件窗口（流式帧 / 工具调用 / 错误）都有 4096 硬上限；
 - 任何服务缺失或抛错都只让对应通道降级为 0，绝不让 `apply` 抛错。
 
+## 编年史：今天第几件事
+
+每个回合结束写一行 JSON 到 `~/.dsh/jarvis-sphere/chronicle.jsonl`（可用 `chronicleDir` 改）：
+
+- 只记 `{时间, 日期, 会话短 id, 用户那句话的前 80 字, 本轮工具数}`，**不记助手输出**；
+- **按会话隔离**：标签与工具基线挂在各自的 pending 上，两个会话并行时不会串台；
+- **子代理回合不计入**（`session.header.origin === 'subagent'` 跳过）：「今天第几件事」指人发起的回合；
+- **注入块不当成你说的话**：`<system-reminder>`、`Time sampled…`、`[MNEMON]` 开头的块被跳过；控制字符与换行压平，按码点截断不劈代理对；
+- 文件超过 512 KB 时**按字节**从尾部回收到 ≤80% 预算（且 ≤2000 行）；临时文件名带 pid，rename 失败会清掉，不留半截或 `.tmp`；
+- 重启时聚合整个（有界的）文件恢复当天计数，不是只看尾部几百行；HUD 多一段 `N TODAY`；
+- 只读工具 `jarvis_chronicle` 返回今天 / 最近 7 天概览 + 最近 N 条记录，时间按**本地时区**显示；
+- `chronicle: false` 可整体关掉（不写文件、不注册工具）。
+
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -167,6 +180,8 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         memoryDirs: []     # 额外探的记忆根目录，默认取 dsh-mnemon 的 dataDir
         memorySlots: 0     # 记忆槽位数；0 = 跟随 nodeCount（上限 1400）
         keeper: true       # 注册只读审计工具 jarvis_memory_review
+        chronicle: true    # 每个回合写一行编年史
+        # chronicleDir: 'C:\绝对路径\'   # 编年史目录；空 = ~/.dsh/jarvis-sphere
 ```
 
 改完在插件页重启该 bundle（或重启 DSH）。
@@ -187,6 +202,7 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
+node test/chronicle-smoke.mjs  # 26/26  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
