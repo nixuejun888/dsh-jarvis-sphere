@@ -1259,7 +1259,7 @@ window.__ModuleLoader__.load({
       var s = this.state
       var cfg = this.cfg
       var target =
-        (s.running ? 0.89 : 0.09) +
+        (s.running ? 1.07 : 0.09) +
         Math.min(0.5, s.streamRate / 9) +
         Math.min(0.4, s.toolRate / 2.2)
       target *= cfg.intensity
