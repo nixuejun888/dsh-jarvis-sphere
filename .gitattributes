@@ -1,2 +1,9 @@
-# persona.md is hashed for its revision tag: line endings must be stable.
-persona.md text eol=lf
+# Keep every tracked text file LF in the repository and in the worktree, so a
+# diff means a real change and persona revision tags stay reproducible.
+* text=auto eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
