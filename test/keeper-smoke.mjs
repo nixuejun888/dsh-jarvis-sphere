@@ -34,7 +34,7 @@ writeFileSync(join(dir, 'runtime', 'USER.md'), 'U'.repeat(500))
 writeFileSync(join(dir, 'documents', 'index.json'), JSON.stringify({ version: 1, documents: new Array(58).fill(0).map((_, i) => ({ id: 'd' + String(i) })) }))
 writeFileSync(join(dir, 'data', '.dsh-memory-bodies.json'), JSON.stringify({ version: 1, bodies: [{ id: 'a', active: true }, { id: 'b', active: false }] }))
 
-const report = auditStore(dir, { now })
+const report = auditStore(dir, { now, limits: { memoryLimitBytes: 10240, userLimitBytes: 4096 } })
 
 check('report ok', report.ok === true, report.ok)
 check('counts entries', report.counts.entries === 6, report.counts.entries)
@@ -45,6 +45,7 @@ check('near duplicate found', report.near.length >= 1 && report.near[0].score >=
 check('stale entry found', report.stale.length === 1 && report.stale[0].index === 4, report.stale.map((s) => s.index))
 check('oversized entry found', report.oversized.length === 1 && report.oversized[0].index === 5, report.oversized.map((s) => s.index))
 check('capacity pressure flagged', report.capacity.memoryRatio > 0.85 && report.suggestions.some((s) => s.includes('已用') && s.includes('88%')), [report.capacity.memoryRatio, report.suggestions[0]])
+check('user limit comes from options', report.capacity.userLimitBytes === 4096 && report.capacity.userRatio > 0.1, [report.capacity.userLimitBytes, report.capacity.userRatio])
 check('read-only disclaimer present', report.suggestions.some((s) => s.includes('只读')), report.suggestions)
 
 const text = renderReport(report)
@@ -79,10 +80,31 @@ check('tool dispose unregisters', registered.length === 0, registered.length)
 // No tools service: a no-op disposer, never a throw.
 check('missing tools service is a no-op', typeof registerKeeper({ get: () => undefined }, () => dir) === 'function', true)
 
+// Secret scrubbing: previews are quoted into the model transcript, so they must
+// never carry a key or a password.
+const secretDir = mkdtempSync(join(tmpdir(), 'jarvis-secret-'))
+mkdirSync(join(secretDir, 'runtime'), { recursive: true })
+writeFileSync(join(secretDir, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [
+  { content: 'API key sk-abcdefghijklmnopqrstuvwx 记住它', target: 'memory', importance: 'normal', created_at: daysAgo(1), updated_at: daysAgo(1) },
+  { content: 'password: hunter2 是测试用', target: 'memory', importance: 'normal', created_at: daysAgo(1), updated_at: daysAgo(1) },
+  { content: 'password hunter2 是测试用', target: 'memory', importance: 'normal', created_at: daysAgo(1), updated_at: daysAgo(1) },
+] }))
+const secretText = JSON.stringify(auditStore(secretDir, { now }))
+check('secrets are scrubbed from previews', !secretText.includes('sk-abcdefghijklmnopqrstuvwx') && !secretText.includes('hunter2'), secretText.length)
+check('scrub marker is visible', secretText.includes('[redacted]'), secretText.slice(0, 60))
+rmSync(secretDir, { recursive: true, force: true })
+
+// The limits resolver reaches the audit instead of the built-in defaults.
+const disposeLimits = registerKeeper(ctx, () => dir, () => ({ memoryLimitBytes: 2048, userLimitBytes: 1024 }))
+const withLimits = await (registered[0] || {}).execute?.({}, {})
+check('limits resolver reaches the audit', withLimits?.capacity?.memoryLimitBytes === 2048 && withLimits?.capacity?.userLimitBytes === 1024, withLimits?.capacity)
+disposeLimits()
 rmSync(dir, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
 for (const r of results) console.log((r.ok ? 'PASS ' : 'FAIL ') + r.label + (r.extra === undefined ? '' : '  [' + JSON.stringify(r.extra) + ']'))
 console.log('\n' + (results.length - failed.length) + '/' + results.length + ' checks passed')
 process.exit(failed.length === 0 ? 0 : 1)
+
+
 

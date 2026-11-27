@@ -11,9 +11,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** Runtime store limits Mnemon ships with; used only for the pressure ratio. */
+/** Runtime store limits Mnemon ships with; overridden by its own config. */
 const DEFAULT_MEMORY_LIMIT_BYTES = 10240
-const DEFAULT_USER_LIMIT_BYTES = 10240
+const DEFAULT_USER_LIMIT_BYTES = 4096
 /** Above this many entries the pairwise scan degrades to exact-match bucketing. */
 const PAIRWISE_LIMIT = 600
 /**
@@ -84,8 +84,29 @@ function similarity(a, b) {
   return Math.max(jaccard(a, b), containment(a, b))
 }
 
+/**
+ * Secret shapes that must never reach a transcript through a preview. Memory
+ * text is quoted into the model's tool result, so every preview is scrubbed.
+ */
+const SECRET_PATTERNS = [
+  /\bsk-[A-Za-z0-9_-]{12,}/gu,
+  /\bgh[pousr]_[A-Za-z0-9]{16,}/gu,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/gu,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/gu,
+  /\b[A-Fa-f0-9]{32,}\b/gu,
+  /* keyed secret: redact the keyword and the credential-shaped value after it */
+  /(password|passwd|pwd|token|secret|api[_-]?key)\s*[:=]?\s*[A-Za-z0-9!@#$%^&*_\-+.]{6,}/giu,
+]
+
+/** Replace secret-looking spans with a marker. */
+function scrub(text) {
+  let out = String(text || '')
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[redacted]')
+  return out
+}
+
 function preview(text, limit = 70) {
-  const flat = String(text || '').replace(/\s+/gu, ' ').trim()
+  const flat = scrub(String(text || '').replace(/\s+/gu, ' ').trim())
   return flat.length > limit ? flat.slice(0, limit) + '…' : flat
 }
 
@@ -105,6 +126,8 @@ export function auditStore(root, options = {}) {
   const staleDays = options.staleDays ?? STALE_DAYS
   const nearThreshold = options.nearThreshold ?? NEAR_THRESHOLD
   const pairwiseLimit = options.pairwiseLimit ?? PAIRWISE_LIMIT
+  const memoryLimitBytes = options.limits?.memoryLimitBytes ?? DEFAULT_MEMORY_LIMIT_BYTES
+  const userLimitBytes = options.limits?.userLimitBytes ?? DEFAULT_USER_LIMIT_BYTES
 
   const files = {
     runtime: join(root, 'runtime', 'memories.json'),
@@ -170,8 +193,8 @@ export function auditStore(root, options = {}) {
 
   const memoryBytes = fileSize(files.memory)
   const userBytes = fileSize(files.user)
-  const memoryRatio = memoryBytes ? Math.round((memoryBytes / DEFAULT_MEMORY_LIMIT_BYTES) * 100) / 100 : 0
-  const userRatio = userBytes ? Math.round((userBytes / DEFAULT_USER_LIMIT_BYTES) * 100) / 100 : 0
+  const memoryRatio = memoryBytes ? Math.round((memoryBytes / memoryLimitBytes) * 100) / 100 : 0
+  const userRatio = userBytes ? Math.round((userBytes / userLimitBytes) * 100) / 100 : 0
 
   const suggestions = []
   if (memoryRatio >= 0.85) suggestions.push('MEMORY.md 已用 ' + Math.round(memoryRatio * 100) + '%，先合并下面的重复条目再继续写新记忆。')
@@ -181,6 +204,7 @@ export function auditStore(root, options = {}) {
   if (oversized.length) suggestions.push('有 ' + oversized.length + ' 条超过 ' + OVERSIZED_CHARS + ' 字，建议拆成「规则 + 详情」两条。')
   if (!suggestions.length) suggestions.push('没有需要处理的条目：容量、重复、陈旧三项都正常。')
   suggestions.push('本工具只读：以上只是建议，改写记忆需要用户确认。')
+  suggestions.push('条目编号是当前 memories.json 里的位置，任何增删都会让编号后移，动手前先用同样的审计复核一次。')
 
   return {
     ok: true,
@@ -191,7 +215,8 @@ export function auditStore(root, options = {}) {
       userBytes,
       memoryRatio,
       userRatio,
-      limitBytes: DEFAULT_MEMORY_LIMIT_BYTES,
+      memoryLimitBytes,
+      userLimitBytes,
     },
     counts: {
       entries: entries.length,
@@ -200,6 +225,12 @@ export function auditStore(root, options = {}) {
       spaces: bodies.length,
       documents: documents.length,
       fresh,
+    },
+    truncated: {
+      duplicates: Math.max(0, duplicates.length - 20),
+      near: Math.max(0, near.length - 20),
+      stale: Math.max(0, stale.length - 20),
+      oversized: Math.max(0, oversized.length - 20),
     },
     duplicates: duplicates.slice(0, 20),
     near: near.slice(0, 20),
@@ -215,9 +246,9 @@ export function renderReport(report) {
   const lines = []
   lines.push('记忆审计（只读）' + (report.root ? ' · ' + report.root : ''))
   lines.push(
-    '容量：MEMORY.md ' + report.capacity.memoryBytes + ' B / ' + report.capacity.limitBytes + ' B（' +
-      Math.round(report.capacity.memoryRatio * 100) + '%），USER.md ' + report.capacity.userBytes + ' B（' +
-      Math.round(report.capacity.userRatio * 100) + '%）',
+    '容量：MEMORY.md ' + report.capacity.memoryBytes + ' B / ' + report.capacity.memoryLimitBytes + ' B（' +
+      Math.round(report.capacity.memoryRatio * 100) + '%）· USER.md ' + report.capacity.userBytes + ' B / ' +
+      report.capacity.userLimitBytes + ' B（' + Math.round(report.capacity.userRatio * 100) + '%）',
   )
   lines.push(
     '库存：' + report.counts.entries + ' 条（用户画像 ' + report.counts.user + ' / 工作记忆 ' + report.counts.memory +
@@ -241,6 +272,10 @@ export function renderReport(report) {
   }
   lines.push('建议：')
   for (const suggestion of report.suggestions) lines.push('  - ' + suggestion)
+  const hidden = report.truncated
+    ? (report.truncated.duplicates + report.truncated.near + report.truncated.stale + report.truncated.oversized)
+    : 0
+  if (hidden > 0) lines.push('（另有 ' + hidden + ' 组候选被截断，未列出，可先处理上面这些。）')
   return lines.join('\n')
 }
 
@@ -248,9 +283,10 @@ export function renderReport(report) {
  * Register the read-only audit tool for as long as this plugin lives.
  * @param ctx - plugin context owning the registration.
  * @param resolveRoot - resolves the Mnemon data root at call time.
+ * @param resolveLimits - resolves Mnemon's byte limits, if the row sets them.
  * @returns a disposer, or a no-op when the tools service is unavailable.
  */
-export function registerKeeper(ctx, resolveRoot) {
+export function registerKeeper(ctx, resolveRoot, resolveLimits) {
   let tools = null
   try {
     tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
@@ -273,7 +309,13 @@ export function registerKeeper(ctx, resolveRoot) {
     execute: async () => {
       const root = resolveRoot()
       if (!root) return { ok: false, reason: 'no Mnemon data root was found' }
-      return auditStore(root)
+      let limits
+      try {
+        limits = typeof resolveLimits === 'function' ? resolveLimits() : undefined
+      } catch (err) {
+        limits = undefined
+      }
+      return auditStore(root, limits ? { limits } : {})
     },
   }
 

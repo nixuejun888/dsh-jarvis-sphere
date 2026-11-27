@@ -678,11 +678,31 @@ export function apply(ctx, config) {
     return pickMemoryRoot(roots, explicit).root
   }
 
+  /** Mnemon's own byte limits when its config exposes them; defaults otherwise. */
+  const resolveMemoryLimits = () => {
+    const limits = { memoryLimitBytes: 10240, userLimitBytes: 4096 }
+    try {
+      const configService = typeof ctx.get === 'function' ? ctx.get('config') : undefined
+      const synced = configService && typeof configService.resolveConfigByPackage === 'function'
+        ? configService.resolveConfigByPackage('dsh-mnemon')
+        : undefined
+      if (synced && typeof synced === 'object') {
+        for (const field of ['memoryLimitBytes', 'userLimitBytes']) {
+          const value = Number(configValue(synced[field]))
+          if (Number.isFinite(value) && value > 0) limits[field] = value
+        }
+      }
+    } catch (err) {
+      void err
+    }
+    return limits
+  }
+
   /**
    * Register the read-only memory audit tool. It only reports; any actual
    * merge, archive or delete stays a decision the user makes.
    */
-  const attachKeeper = () => (cfg.keeper === false ? () => {} : registerKeeper(ctx, resolveMemoryRoot))
+  const attachKeeper = () => (cfg.keeper === false ? () => {} : registerKeeper(ctx, resolveMemoryRoot, resolveMemoryLimits))
   try {
     if (typeof ctx.effect === 'function') ctx.effect(attachKeeper, 'jarvis-sphere: memory keeper')
     else {
