@@ -1368,8 +1368,8 @@ window.__ModuleLoader__.load({
             if (ba <= 0.004) continue
             var bx2 = bx + Math.cos(bang) * bdist
             var by2 = by + Math.sin(bang) * bdist
-            var bsize = (1.6 + 4.2 * (1 - bh)) * (0.5 + 0.5 * (1 - shardP * 0.5))
-            var bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, bsize * 3.2)
+            var bsize = (0.53 + 1.4 * (1 - bh)) * (0.5 + 0.5 * (1 - shardP * 0.5))
+            var bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, bsize * 2.4)
             bg.addColorStop(0, rgba(hi, ba))
             bg.addColorStop(0.42, rgba(accent, ba * 0.5))
             bg.addColorStop(1, rgba(accent, 0))
@@ -1457,9 +1457,11 @@ window.__ModuleLoader__.load({
 
       var s = this.state
       var cfg = this.cfg
-      var goldTarget = s.running ? 1 : 0
-      var goldStep = Math.min(1, Math.max(0, dt) * 0.9)
-      this.goldMix = this.goldMix + (goldTarget - this.goldMix) * goldStep
+      var blastBusy = !!this.comet || !!this.cometBurst
+      var goldTarget = s.running && !blastBusy ? 1 : 0
+      var goldDelta = goldTarget - this.goldMix
+      var goldStep = Math.min(Math.abs(goldDelta), Math.max(0, dt) / 2)
+      this.goldMix = this.goldMix + (goldDelta > 0 ? goldStep : -goldStep)
       var target =
         (s.running ? 0.5 : 0.09) +
         Math.min(0.5, s.streamRate / 9) +
@@ -1528,8 +1530,9 @@ window.__ModuleLoader__.load({
       var hi = this.hilite || HILITE.dark
       var gold = this.goldMix || 0
       if (gold > 0.002) {
-        base = mix(base, accent, gold * 0.85)
-        hi = mix(hi, { r: 255, g: 250, b: 232 }, gold * 0.55)
+        // 星光紫：任务运行时整球慢慢过渡到紫色
+        base = mix(base, { r: 176, g: 132, b: 255 }, gold * 0.92)
+        hi = mix(hi, { r: 246, g: 236, b: 255 }, gold * 0.6)
       }
       var energy = this.energy
       var lit = Math.min(1.3, energy)
