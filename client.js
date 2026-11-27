@@ -1530,10 +1530,10 @@ window.__ModuleLoader__.load({
       var hi = this.hilite || HILITE.dark
       var gold = this.goldMix || 0
       if (gold > 0.002) {
-        // 星光紫：任务运行时整球慢慢过渡到更亮的紫色
-        base = mix(base, { r: 202, g: 166, b: 255 }, gold * 0.96)
-        base = mix(base, { r: 236, g: 220, b: 255 }, gold * 0.18)
-        hi = mix(hi, { r: 255, g: 250, b: 255 }, gold * 0.78)
+        // 金色：任务运行时整球慢慢过渡到亮金色
+        base = mix(base, { r: 255, g: 206, b: 112 }, gold * 0.96)
+        base = mix(base, { r: 255, g: 238, b: 194 }, gold * 0.20)
+        hi = mix(hi, { r: 255, g: 250, b: 236 }, gold * 0.80)
       }
       var energy = this.energy
       var lit = Math.min(1.3, energy)
