@@ -20,7 +20,6 @@ window.__ModuleLoader__.load({
     var TAU = Math.PI * 2
 
     var CSS = [
-      '@keyframes jvsBlast{0%{transform:translate(0,0) scale(0.4);opacity:0;}12%{opacity:1;}100%{transform:translate(var(--jvs-dx),var(--jvs-dy)) scale(0.25);opacity:0;}}',
       '.jvs-root{position:absolute;inset:0;pointer-events:none;overflow:hidden;contain:strict;}',
       '.jvs-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}',
       '.jvs-probe{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}',
@@ -275,13 +274,6 @@ window.__ModuleLoader__.load({
       this.memoryBornAt = 0
       this.memoryPrevCounts = null
       this.flyIns = []
-      this.comet = null
-      this.cometTrail = []
-      this.cometEmbers = []
-      this.cometBurst = null
-      this.pendingComet = true
-      this.goldMix = 0
-      this.lastUserMessages = -1
 
       this.immersive = false
       this.onKey = null
@@ -1160,24 +1152,13 @@ window.__ModuleLoader__.load({
         this.burst(0.45)
         this.spawnArc(1.1)
       }
-      var userMessages = Number(this.state.counters.userMessages) || 0
-      if (this.lastUserMessages < 0) {
-        var selfComet = this
-        setTimeout(function () { selfComet.startComet() }, 1200)
-      } else if (userMessages > this.lastUserMessages) {
-        this.startComet()
-      }
-      this.lastUserMessages = userMessages
       var tools = Number(this.state.counters.tools) || 0
       if (this.lastTools >= 0 && tools > this.lastTools) {
         var n = Math.min(3, tools - this.lastTools)
         for (var i = 0; i < n; i++) this.burst(0.5 + 0.15 * i)
       }
       this.lastTools = tools
-      if (!prevRunning && busy) {
-        this.burst(0.35)
-        this.startComet()
-      }
+      if (!prevRunning && busy) this.burst(0.35)
     }
 
     /**
@@ -1211,176 +1192,6 @@ window.__ModuleLoader__.load({
       this.memoryRef = memory
       this.memorySlotsCache = out
       return out
-    }
-
-
-
-    /** Start a comet drawn exactly like the memory dots, only bigger. */
-    SphereEngine.prototype.startComet = function () {
-      var nowMs = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-      this.comet = { at: nowMs, dur: 2200 }
-      this.cometTrail = []
-      this.cometEmbers = []
-    }
-
-    /** Soft trail, amber head, shed embers, then a particle burst on landing. */
-    SphereEngine.prototype.drawComet = function (ctx, cx, cy, R, base, accent, hi, alphaScale) {
-      if (this.comet) {
-        var c = this.comet
-        var nowMs2 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-        var ageMs = nowMs2 - c.at
-        var age = ageMs / 1000
-        var p = Math.min(1, Math.max(0, ageMs / c.dur))
-        var ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
-        var sx = cx + R * 0.94
-        var sy = cy + R * 1.28
-        var hx = sx + (cx - sx) * ease
-        var hy = sy + (cy - sy) * ease
-        this.cometTrail.push({ x: hx, y: hy, t: this.time })
-        while (this.cometTrail.length && this.time - this.cometTrail[0].t > 0.55) this.cometTrail.shift()
-        if (this.cometTrail.length > 90) this.cometTrail.shift()
-        if (Math.random() < 0.5) {
-          this.cometEmbers.push({
-            x: hx + (Math.random() - 0.5) * 10,
-            y: hy + (Math.random() - 0.5) * 10,
-            vx: (Math.random() - 0.5) * 30,
-            vy: (Math.random() - 0.5) * 30 - 8,
-            born: this.time,
-            life: 0.45 + Math.random() * 0.45,
-            size: 1 + Math.random() * 1.6,
-          })
-        }
-        ctx.save()
-        ctx.globalCompositeOperation = 'lighter'
-        var n = this.cometTrail.length
-        for (var i = 0; i < n; i += 1) {
-          var tr = this.cometTrail[i]
-          var k = n > 1 ? i / (n - 1) : 1
-          var fadeAge = Math.max(0, 1 - (this.time - tr.t) / 0.55)
-          var rad = (2.5 + 9 * k) * (0.6 + 0.4 * fadeAge)
-          var a = (0.05 + 0.20 * k) * fadeAge * alphaScale
-          var g = ctx.createRadialGradient(tr.x, tr.y, 0, tr.x, tr.y, rad * 2.6)
-          g.addColorStop(0, rgba(hi, a * 1.1))
-          g.addColorStop(0.35, rgba(accent, a * 0.65))
-          g.addColorStop(1, rgba(accent, 0))
-          ctx.fillStyle = g
-          ctx.beginPath()
-          ctx.arc(tr.x, tr.y, rad * 2.6, 0, TAU)
-          ctx.fill()
-        }
-        var live = []
-        for (var e = 0; e < this.cometEmbers.length; e += 1) {
-          var em = this.cometEmbers[e]
-          var ea = this.time - em.born
-          if (ea > em.life) continue
-          live.push(em)
-          var ex = em.x + em.vx * ea
-          var ey = em.y + em.vy * ea
-          var ef = (1 - ea / em.life) * 0.7 * alphaScale
-          var eg = ctx.createRadialGradient(ex, ey, 0, ex, ey, em.size * 4)
-          eg.addColorStop(0, rgba(hi, ef))
-          eg.addColorStop(0.4, rgba(accent, ef * 0.5))
-          eg.addColorStop(1, rgba(accent, 0))
-          ctx.fillStyle = eg
-          ctx.beginPath()
-          ctx.arc(ex, ey, em.size * 4, 0, TAU)
-          ctx.fill()
-        }
-        this.cometEmbers = live
-        this.lastCometX = hx
-        this.lastCometY = hy
-        var pulse = 0.85 + 0.15 * Math.sin(this.time * 9)
-        var core = 4.6 * pulse
-        var halo = core * 7.5
-        var hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, halo)
-        hg.addColorStop(0, rgba('#ffffff', 0.95 * alphaScale))
-        hg.addColorStop(0.18, rgba(hi, 0.9 * alphaScale))
-        hg.addColorStop(0.42, rgba(accent, 0.38 * alphaScale))
-        hg.addColorStop(1, rgba(accent, 0))
-        ctx.fillStyle = hg
-        ctx.beginPath()
-        ctx.arc(hx, hy, halo, 0, TAU)
-        ctx.fill()
-        ctx.fillStyle = rgba(hi, 0.95 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(hx, hy, core * 1.5, 0, TAU)
-        ctx.fill()
-        ctx.fillStyle = rgba('#ffffff', 0.98 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(hx, hy, core * 0.62, 0, TAU)
-        ctx.fill()
-        ctx.restore()
-        if (ageMs >= c.dur) {
-          this.cometBurst = { at: nowMs2, x: cx, y: cy }
-          this.comet = null
-          this.cometTrail = []
-          this.cometEmbers = []
-        }
-      }
-      if (this.cometBurst) {
-        var nowMs3 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-        var bAge = (nowMs3 - this.cometBurst.at) / 1000
-        if (!isFinite(bAge) || bAge < 0 || bAge > 1.6) {
-          this.cometBurst = null
-        } else {
-          var bx = this.cometBurst.x
-          var by = this.cometBurst.y
-          ctx.save()
-          ctx.globalCompositeOperation = 'lighter'
-          // white-hot flash: fast, bright, gone
-          var flashAge = Math.min(1, bAge / 0.28)
-          if (flashAge < 1) {
-            var flashR = R * (0.06 + 0.18 * flashAge)
-            var fg = ctx.createRadialGradient(bx, by, 0, bx, by, flashR)
-            fg.addColorStop(0, rgba('#ffffff', (1 - flashAge) * 0.95))
-            fg.addColorStop(0.28, rgba(hi, (1 - flashAge) * 0.8))
-            fg.addColorStop(0.6, rgba(accent, (1 - flashAge) * 0.35))
-            fg.addColorStop(1, rgba(accent, 0))
-            ctx.fillStyle = fg
-            ctx.beginPath()
-            ctx.arc(bx, by, flashR, 0, TAU)
-            ctx.fill()
-          }
-          // soft expanding halo: several translucent discs, no hard edge
-          var haloP = Math.min(1, bAge / 0.9)
-          for (var hh = 0; hh < 3; hh += 1) {
-            var hr = R * (0.07 + 0.17 * haloP) * (1 + hh * 0.16)
-            var ha = (1 - haloP) * (0.16 - hh * 0.045) * alphaScale
-            if (ha <= 0.002) continue
-            var hg2 = ctx.createRadialGradient(bx, by, hr * 0.72, bx, by, hr)
-            hg2.addColorStop(0, rgba(accent, 0))
-            hg2.addColorStop(0.55, rgba(accent, ha))
-            hg2.addColorStop(1, rgba(accent, 0))
-            ctx.fillStyle = hg2
-            ctx.beginPath()
-            ctx.arc(bx, by, hr, 0, TAU)
-            ctx.fill()
-          }
-          // shards flying out
-          var COUNT2 = 120
-          var shardP = Math.min(1, bAge / 0.55)
-          var shardEase = 1 - Math.pow(1 - shardP, 2.2)
-          for (var b = 0; b < COUNT2; b += 1) {
-            var bh = (b * 0.6180339887) % 1
-            var bang = bh * TAU + (b % 5) * 0.31
-            var bdist = R * (0.04 + 0.31 * ((b * 0.4142135624) % 1)) * shardEase
-            var ba = Math.max(0, 1 - bAge / 1.5) * (0.85 - 0.5 * bh) * alphaScale
-            if (ba <= 0.004) continue
-            var bx2 = bx + Math.cos(bang) * bdist
-            var by2 = by + Math.sin(bang) * bdist
-            var bsize = (0.53 + 1.4 * (1 - bh)) * (0.5 + 0.5 * (1 - shardP * 0.5))
-            var bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, bsize * 2.4)
-            bg.addColorStop(0, rgba(hi, ba))
-            bg.addColorStop(0.42, rgba(accent, ba * 0.5))
-            bg.addColorStop(1, rgba(accent, 0))
-            ctx.fillStyle = bg
-            ctx.beginPath()
-            ctx.arc(bx2, by2, bsize * 3.2, 0, TAU)
-            ctx.fill()
-          }
-          ctx.restore()
-        }
-      }
     }
 
     /** Compare the new memory slots with the previous frame and queue fly-ins. */
@@ -1445,23 +1256,8 @@ window.__ModuleLoader__.load({
     }
 
     SphereEngine.prototype.update = function (dt) {
-      // 硬性兜底：彗星/爆炸按真实时钟超时清理，不依赖绘制路径
-      var wallNow = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-      if (this.comet && isFinite(this.comet.at) && wallNow - this.comet.at > this.comet.dur + 250) {
-        this.cometBurst = { at: wallNow, x: this.lastCometX || this.w / 2, y: this.lastCometY || this.h / 2 }
-        this.comet = null
-        this.cometTrail = []
-        this.cometEmbers = []
-      }
-      if (this.cometBurst && isFinite(this.cometBurst.at) && wallNow - this.cometBurst.at > 2200) this.cometBurst = null
-
       var s = this.state
       var cfg = this.cfg
-      var blastBusy = !!this.comet || !!this.cometBurst
-      var goldTarget = s.running && !blastBusy ? 1 : 0
-      var goldDelta = goldTarget - this.goldMix
-      var goldStep = Math.min(Math.abs(goldDelta), Math.max(0, dt) / 2)
-      this.goldMix = this.goldMix + (goldDelta > 0 ? goldStep : -goldStep)
       var target =
         (s.running ? 0.5 : 0.09) +
         Math.min(0.5, s.streamRate / 9) +
@@ -1509,7 +1305,6 @@ window.__ModuleLoader__.load({
 
     SphereEngine.prototype.draw = function () {
       var ctx = this.ctx
-
       var w = this.w
       var hgt = this.h
       if (!w || !hgt) return
@@ -1523,18 +1318,10 @@ window.__ModuleLoader__.load({
       var alphaScale = cfg.opacity
       if (alphaScale <= 0.001) return
 
-
       var pal = this.palette || PALETTES.dark
       var base = pal[cfg.color] || pal.cyan
       var accent = this.accent || ACCENT.dark
       var hi = this.hilite || HILITE.dark
-      var gold = this.goldMix || 0
-      if (gold > 0.002) {
-        // 金色：任务运行时整球慢慢过渡到亮金色
-        base = mix(base, { r: 255, g: 206, b: 112 }, gold * 0.96)
-        base = mix(base, { r: 255, g: 238, b: 194 }, gold * 0.20)
-        hi = mix(hi, { r: 255, g: 250, b: 236 }, gold * 0.80)
-      }
       var energy = this.energy
       var lit = Math.min(1.3, energy)
       // 全息闪烁：极轻微的亮度抖动
@@ -1799,19 +1586,13 @@ window.__ModuleLoader__.load({
         for (var fi = 0; fi < this.flyIns.length; fi += 1) {
           var fly = this.flyIns[fi]
           var flyAge = this.time - fly.at
-          if (flyAge > 2.6) continue
-          if (fly.dead) continue
+          if (flyAge > 1.4) continue
           keepFly.push(fly)
-          var flyP = Math.min(1, Math.max(0, flyAge / 1.35))
+          var flyP = Math.min(1, Math.max(0, flyAge / 0.75))
           var ease = 1 - Math.pow(1 - flyP, 3)
           var slotX = px[fly.idx]
           var slotY = py[fly.idx]
           if (!isFinite(slotX) || !isFinite(slotY)) continue
-          var flyAng = Math.atan2(slotY - cy, slotX - cx) + 2.1
-          var startX = cx + Math.cos(flyAng) * R * 0.95
-          var startY = cy + Math.sin(flyAng) * R * 0.95
-          var ctrlX2 = (startX + slotX) / 2 + ((startX + slotX) / 2 - cx) * 0.30
-          var ctrlY2 = (startY + slotY) / 2 + ((startY + slotY) / 2 - cy) * 0.30
           var flyTint = fly.t === 'user'
             ? (pal.amber || accent)
             : fly.t === 'space'
@@ -1819,43 +1600,20 @@ window.__ModuleLoader__.load({
               : mix(pal.cyan || base, hi, 0.6)
           for (var tr = 0; tr < 4; tr += 1) {
             var tp = Math.max(0, ease - tr * 0.055)
-            var inv2 = 1 - tp
-            var ax = inv2 * inv2 * startX + 2 * inv2 * tp * ctrlX2 + tp * tp * slotX
-            var ay = inv2 * inv2 * startY + 2 * inv2 * tp * ctrlY2 + tp * tp * slotY
-            var ta = (1 - flyP) * 0.95 * alphaScale * (1 - tr * 0.16)
+            var ax = cx + (slotX - cx) * tp
+            var ay = cy + (slotY - cy) * tp
+            var ta = (1 - flyP) * 0.55 * alphaScale * (1 - tr * 0.2)
             ctx.fillStyle = rgba(flyTint, Math.max(0, ta))
             ctx.beginPath()
-            ctx.arc(ax, ay, 2.9 - tr * 0.4, 0, TAU)
+            ctx.arc(ax, ay, 2.0 - tr * 0.3, 0, TAU)
             ctx.fill()
           }
           if (flyP >= 1) {
-            if (!fly.burstAt) fly.burstAt = this.time
-            var mAge = this.time - fly.burstAt
-            if (mAge > 0.8) {
-              fly.dead = true
-            } else {
-              ctx.save()
-              ctx.globalCompositeOperation = 'lighter'
-              var mCount = 30
-              for (var mb = 0; mb < mCount; mb += 1) {
-                var mh = (mb * 0.6180339887) % 1
-                var mAng = mh * TAU
-                var mDist = 34 * (0.25 + 0.75 * ((mb * 0.4142135624) % 1)) * Math.min(1, mAge / 0.32)
-                var mx2 = slotX + Math.cos(mAng) * mDist
-                var my2 = slotY + Math.sin(mAng) * mDist
-                var ma = (1 - mAge / 0.8) * (0.85 - 0.5 * mh) * alphaScale
-                if (ma <= 0.004) continue
-                var mg = ctx.createRadialGradient(mx2, my2, 0, mx2, my2, 5)
-                mg.addColorStop(0, rgba(hi, ma))
-                mg.addColorStop(0.45, rgba(flyTint, ma * 0.55))
-                mg.addColorStop(1, rgba(flyTint, 0))
-                ctx.fillStyle = mg
-                ctx.beginPath()
-                ctx.arc(mx2, my2, 5, 0, TAU)
-                ctx.fill()
-              }
-              ctx.restore()
-            }
+            var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
+            ctx.fillStyle = rgba(flyTint, 0.28 * sparkLeft * alphaScale)
+            ctx.beginPath()
+            ctx.arc(slotX, slotY, 3 + 7 * (1 - sparkLeft), 0, TAU)
+            ctx.fill()
           }
         }
         this.flyIns = keepFly
@@ -2039,11 +1797,6 @@ window.__ModuleLoader__.load({
       this.drawGauge(ctx, cx, cy, R, base, accent, hi, alphaScale)
         this.drawHud(ctx, cx, cy, R, base, accent, alphaScale)
       }
-
-
-
-      // ---- 任务启动彗星（画布版，和记忆光点同一套画法） ----
-      this.drawComet(ctx, cx, cy, R, base, accent, hi, alphaScale)
     }
 
     /** Blend two palette colours; t is clamped to 0..1. */
@@ -2412,7 +2165,6 @@ window.__ModuleLoader__.load({
         var engine
         try {
           engine = new SphereEngine(host)
-      setTimeout(function () { engine.startComet() }, 2500)
         } catch (err) {
           try {
             console.error('[jarvis-sphere] engine failed:', err)
@@ -2440,3 +2192,5 @@ window.__ModuleLoader__.load({
     }
   },
 })
+
+
