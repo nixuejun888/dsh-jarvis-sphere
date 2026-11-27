@@ -77,7 +77,7 @@ apply(a, { nodeCount: 111, chronicle: false })
 let state = getState(a, PRIMARY)
 check('A registers the primary route', state.status === 200, state.status)
 check('A serves its config', state.body?.cfg?.nodeCount === 111, state.body?.cfg?.nodeCount)
-check('A advertises build 3', state.body?.build === 3, state.body?.build)
+check('A advertises build 3', state.body?.build === 4, state.body?.build)
 
 // 2. Disabling must release the route: a re-enable has to register again
 //    instead of hitting "duplicate exact route".
@@ -112,7 +112,7 @@ check('B activates over a leaked primary route', threw === null, threw === null 
 state = getState(b, ALTERNATE)
 check('B claims the alternate route', state.status === 200, state.status)
 check('alternate serves B data', state.body?.cfg?.nodeCount === 222, state.body?.cfg?.nodeCount)
-check('alternate advertises build 3', state.body?.build === 3, state.body?.build)
+check('alternate advertises build 3', state.body?.build === 4, state.body?.build)
 check('frozen primary is untouched', getState(b, PRIMARY).body?.build === 2, getState(b, PRIMARY).body?.build)
 
 // 4. Unloading B releases the alternate route but cannot touch the frozen one.

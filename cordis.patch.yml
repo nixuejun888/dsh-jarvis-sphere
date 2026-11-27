@@ -28,5 +28,7 @@
         memoryWrite: true
         recap: true
         report: true
+        pulse: true
+        # gauge: glow   # glow（默认）或 arc（旧弧线）
         # chronicleDir: 'C:\\绝对路径'
 

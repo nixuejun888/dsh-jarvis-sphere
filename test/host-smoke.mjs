@@ -46,7 +46,7 @@ function check(label, ok, extra) {
 // 1. idle
 let snap = getState().body
 check('idle running=false', snap.running === false, snap.running)
-check('build marker', snap.build === 3, snap.build)
+check('build marker', snap.build === 4, snap.build)
 check('cfg passes nodeCount', snap.cfg.nodeCount === 300, snap.cfg.nodeCount)
 
 // 2. stream frames make it busy

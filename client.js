@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
     /* 老版本实例可能占着主路径不放（Host 路由没随插件卸载释放），
        所以只认 build 够新的快照，主路径不达标时改投这个备用路径。 */
     var STATE_PATHS = ['/dsh-jarvis/state', '/dsh-jarvis/state-v2']
-    var MIN_BUILD = 3
+    var MIN_BUILD = 4
     var TAU = Math.PI * 2
 
     var CSS = [
@@ -320,7 +320,7 @@ window.__ModuleLoader__.load({
         var item = list[i]
         if (!item || typeof item.s !== 'number' || item.s <= (this.lastPulse || 0)) continue
         if (item.s > newest) newest = item.s
-        this.pulses.push({ s: item.s, k: String(item.k || 'tool'), at: now, p: this.pulsePoint(item.s) })
+        this.pulses.push({ s: item.s, k: String(item.k || 'tool'), at: Number(item.t) || now, p: this.pulsePoint(item.s) })
       }
       this.lastPulse = newest
       var cutoff = now - 30000
@@ -329,10 +329,11 @@ window.__ModuleLoader__.load({
         if (this.pulses[j].at >= cutoff) kept.push(this.pulses[j])
       }
       this.pulses = kept
+      if (this.pulses.length > 24) this.pulses.splice(0, this.pulses.length - 24)
     }
 
     /** Draw the trail: expanding rings on the sphere, fading over ~30 s. */
-    SphereEngine.prototype.drawPulses = function (ctx, project, R, alpha) {
+    SphereEngine.prototype.drawPulses = function (ctx, project, R, alpha, cx, cy) {
       if (!this.pulses || !this.pulses.length) return
       var now = Date.now()
       var saved = ctx.globalCompositeOperation
@@ -342,6 +343,17 @@ window.__ModuleLoader__.load({
         var age = (now - pulse.at) / 30000
         if (age < 0 || age > 1) continue
         var point = project(pulse.p.x, pulse.p.y, pulse.p.z * 0.6)
+        if (typeof cx === 'number' && typeof cy === 'number') {
+          var ddx = point[0] - cx
+          var ddy = point[1] - cy
+          var dist = Math.sqrt(ddx * ddx + ddy * ddy)
+          var floorR = R * 0.62
+          if (dist > 0.001 && dist < floorR) {
+            var push = floorR / dist
+            point[0] = cx + ddx * push
+            point[1] = cy + ddy * push
+          }
+        }
         var fade = 1 - age
         var tint = pulse.k === 'error' ? (this.alert || { r: 255, g: 120, b: 120 }) : (this.palette && this.palette.violet) || { r: 120, g: 200, b: 255 }
         var grow = 0.35 + age * 2.2
@@ -1331,7 +1343,7 @@ window.__ModuleLoader__.load({
 
       // ---- HUD（不过泛光，保证清晰） ----
       if (cfg.showHud && alphaScale > 0.15) {
-        this.drawPulses(ctx, project, R, alphaScale)
+        if (alphaScale > 0.15) this.drawPulses(ctx, project, R, alphaScale, cx, cy)
       this.drawGauge(ctx, cx, cy, R, base, accent, hi, alphaScale)
         this.drawHud(ctx, cx, cy, R, base, accent, alphaScale)
       }

@@ -71,6 +71,7 @@ const session = { id: 'session-pulse', deriveMessages: () => [] }
   check('a tool call is recorded', pulses.some((pulse) => pulse.k === 'tool'), pulses)
   check('an error is recorded', pulses.some((pulse) => pulse.k === 'error'), pulses)
   check('a turn end is not a pulse', pulses.length === 2, pulses.length)
+check('a fresh process starts above any earlier sequence', (state(routes).pulses[0] || {}).s > 1e12, (state(routes).pulses[0] || {}).s)
   check('every pulse has a monotonic seq and a time', pulses.every((pulse, index) => index === 0 || pulse.s > pulses[index - 1].s) && pulses.every((pulse) => Number.isFinite(pulse.t)), pulses)
 }
 
@@ -93,6 +94,31 @@ const session = { id: 'session-pulse', deriveMessages: () => [] }
   check('pulse off sends nothing', state(routes).pulses.length === 0, state(routes).pulses)
 }
 
+// --- 4. only the two intended fields, and old pulses expire ---
+{
+  const { ctx, routes, listeners } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c4'), backupDir: join(root, 'b4'), alerts: false })
+  emit(listeners, 'session/event', session, { type: 'assistant/message', data: { text: 'hello' } })
+  check('an assistant message is not a pulse', state(routes).pulses.length === 0, state(routes).pulses)
+  emit(listeners, 'session/event', session, { type: 'tool/call', data: { callId: 'c1', name: 'read' } })
+  const pulses = state(routes).pulses
+  check('a pulse carries exactly s/k/t', JSON.stringify(Object.keys(pulses[0]).sort()) === '["k","s","t"]', Object.keys(pulses[0]))
+
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const later = makeCtx()
+    apply(later.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c5'), backupDir: join(root, 'b5'), alerts: false })
+    emit(later.listeners, 'session/event', session, { type: 'tool/call', data: { callId: 'c2', name: 'read' } })
+    clock += 31000
+    check('a pulse older than thirty seconds is not sent', state(later.routes).pulses.length === 0, state(later.routes).pulses)
+    emit(later.listeners, 'session/event', session, { type: 'tool/call', data: { callId: 'c3', name: 'read' } })
+    check('a fresh pulse after the gap is sent', state(later.routes).pulses.length === 1, state(later.routes).pulses)
+  } finally {
+    Date.now = realNow
+  }
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

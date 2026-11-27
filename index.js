@@ -224,7 +224,7 @@ const ROUTE_PATH = '/dsh-jarvis/state'
  */
 const ROUTE_PATH_ALTERNATE = '/dsh-jarvis/state-v2'
 /** Snapshot shape marker; the Client half ignores older builds. */
-const BUILD = 3
+const BUILD = 4
 
 function num(value, fallback) {
   const n = Number(value)
@@ -579,7 +579,7 @@ export function apply(ctx, config) {
   /** Instructions that sound durable: queued so a human can confirm them. */
   const recap = { pending: [], recent: [] }
   /** Monotonic event pulses for the sphere: tools and errors only. */
-  const pulses = { seq: 0, items: [] }
+  const pulses = { seq: Date.now(), items: [] }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
   /** Cached self-check report; diagnostics do file and service probes. */
@@ -2571,7 +2571,6 @@ function parseChronicleLine(line) {
     activeTools.clear()
   }
 }
-
 
 
 
