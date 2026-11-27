@@ -16,6 +16,7 @@
         offsetY: 0
         persona: true
         # personaText: '覆盖内置的 JARVIS 人设正文'
+        # personaFile: 'C:\\绝对路径\\persona.md'   # 空 = 用包内 persona.md
         memoryDirs: []
         memorySlots: 0
         keeper: true

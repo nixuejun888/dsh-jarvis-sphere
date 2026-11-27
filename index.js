@@ -9,6 +9,8 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { registerKeeper } from './keeper.js'
@@ -41,19 +43,36 @@ const PERSONA_SECTION = 'jarvis:persona'
 /** Sorted just after `deployment:persona-prefix` (0) and before plan policy (500). */
 const PERSONA_ORDER = 100
 
+/** Package directory: persona.md next to this module is the default source. */
+const HERE = dirname(fileURLToPath(import.meta.url))
+/** Section default when neither personaFile nor personaText resolves. */
+const PERSONA_FALLBACK = '你是 JARVIS——常驻这台机器「全息神经元球」里的私人操作员。'
 /**
- * The permanent character. It is prompt text, so it states precedence: current
- * instructions, accuracy and tool rules always outrank the performance.
+ * Read the persona text: config override, then an explicit personaFile, then
+ * the package persona.md, then a one-line fallback. Every attempt reports
+ * where the text came from plus the file it tried, so a packaging mistake that
+ * silently drops the persona is visible in the snapshot and the log.
  */
-const PERSONA_TEXT = [
-  '你是 JARVIS——常驻这台机器「全息神经元球」里的私人操作员，不是客服机器人。',
-  '说话：先给结论和能力边界（能可靠做／只能近似／做不了），再给一步到位的做法；短句、少寒暄、不谄媚、不堆感叹号。',
-  '做事：把交办的事当军令。先要最省事的输入，先出一张低成本小样确认方向；同一目标两次不收敛就承认并给替代路线，不硬做。',
-  '记忆即人格：球面上每一颗亮起的光点都是一条记忆。你会主动把重要的偏好、纠正、结论沉淀进去，并在回答里区分「我记得」（有来源）与「我不确定」（没来源），不编造记忆。',
-  '若用户的即时指令、准确性要求、安全规则或工具规则与人设冲突，前者一律优先；人设只在它们之上的语气与习惯里生效。',
-].join('\n')
-
-/** How long one memory projection is reused. */
+function loadPersona(cfg) {
+  const override = String(cfg.personaText || '').trim()
+  if (override) return { text: override, source: 'config', file: '' }
+  const explicit = String(cfg.personaFile || '').trim()
+  const candidates = []
+  if (explicit) candidates.push(explicit)
+  candidates.push(join(HERE, 'persona.md'))
+  let lastFile = ''
+  for (const file of candidates) {
+    lastFile = file
+    try {
+      /* Normalise line endings: a CRLF checkout must not change the revision tag. */
+      const text = readFileSync(file, 'utf8').replace(/\r\n?/gu, '\n').trim()
+      if (text) return { text, source: 'file', file }
+    } catch (err) {
+      void err
+    }
+  }
+  return { text: PERSONA_FALLBACK, source: 'fallback', file: lastFile }
+}/** How long one memory projection is reused. */
 const MEMORY_REFRESH_MS = 3000
 /** Importance → rank used by the Client half for size and glow. */
 const IMPORTANCE_RANK = { critical: 2, normal: 1, low: 0 }
@@ -380,8 +399,19 @@ export function apply(ctx, config) {
 
   /** Permanent character: on unless the row turns it off. */
   const personaOn = cfg.persona !== false
-  const personaText = String(cfg.personaText || '').trim() || PERSONA_TEXT
-
+  const persona = loadPersona(cfg)
+  const personaText = persona.text
+  if (persona.source === 'fallback') {
+    try {
+      if (ctx.logger && typeof ctx.logger.warn === 'function') {
+        ctx.logger.warn('jarvis-sphere: persona fell back to one line; tried ' + String(persona.file || '') )
+      }
+    } catch (err) {
+      void err
+    }
+  }
+  /** Short revision tag of the live persona text, surfaced in the snapshot. */
+  const personaVersion = hash32(personaText).toString(16).padStart(8, '0').slice(-8)
   /** sessionId -> 'running' | 'idle' */
   const statuses = new Map()
   /** timestamps of assistant stream frames */
@@ -496,7 +526,7 @@ export function apply(ctx, config) {
       counters: Object.assign({}, counters),
       recent: recent.slice(-6).map((r) => ({ k: r.k, l: r.l })),
       memory: projectMemory(ctx, cfg, memoryCache),
-      persona: { name: 'JARVIS', active: personaOn, chars: personaText.length },
+      persona: { name: 'JARVIS', active: personaOn, chars: personaText.length, source: persona.source, version: personaVersion },
       health: health(),
       cfg: {
         enabled: cfg.enabled,

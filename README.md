@@ -66,6 +66,14 @@ JARVIS 语气与工作习惯，而不是只在这个会话里临时生效。它�
 node test/keeper-smoke.mjs  # 25/25
 ```
 
+## 人格文件与版本
+
+人设不再写死在代码里，而是包内的 `persona.md`（跟着仓库走版本）：
+
+- 优先级：行配置 `personaText` → `personaFile` 指定的文件 → 包内 `persona.md` → 一行兜底（**显式文件坏了会回落到包内文件**，只有两个都拿不到才用兜底，并打一条 warn）；`persona.md` 按 LF 归一化后哈希，仓库里有 `.gitattributes` 锁行尾，换机器版本号不变；
+- 快照里的 `persona` 会带 `source`（config / file / fallback）与 `version`（正文哈希前 8 位），一眼看出当前跑的是哪一版；
+- 改人格 = 改 `persona.md`，重启插件即生效；想临时试一版就填 `personaText`，不污染仓库；
+- 每周自检除了记忆库，也会复盘「这周有几处偏离人格」，偏离了就改文件、升版本。
 ## 仪表：记忆 / 上下文 / 待办 / 错误
 
 球体不只会动，它报健康。HUD 首行是
@@ -154,6 +162,7 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         offsetX: 0         # 球心相对窗口中心的偏移
         offsetY: 0
         persona: true      # 永久人格（写进每个会话的系统提示）
+        # personaFile: 'C:\\绝对路径\\persona.md'   # 指定人格文件；留空用包内 persona.md
         personaText: ''    # 覆盖内置人设正文
         memoryDirs: []     # 额外探的记忆根目录，默认取 dsh-mnemon 的 dataDir
         memorySlots: 0     # 记忆槽位数；0 = 跟随 nodeCount（上限 1400）
@@ -177,7 +186,7 @@ node test/host-smoke.mjs    # 22/22  工具计数、收尾、轮次、405、卸�
 node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启用、旧路由占位、备用路径
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
-node test/health-smoke.mjs  # 17/17  仪表：缓存 TTL、比例语义、错误剪枝代价、快照尺寸、服务全挂、TDZ
+node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

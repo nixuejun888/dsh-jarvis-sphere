@@ -30,6 +30,7 @@
     "client.js",
     "cordis.patch.yml",
     "keeper.js",
+    "persona.md",
     "locale",
     "docs",
     "icon.svg",
