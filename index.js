@@ -1949,6 +1949,7 @@ function parseChronicleLine(line) {
     }
     if (!tools || typeof tools.register !== 'function') return () => {}
     const render = (value) => {
+      if (value.ok === false) return '未执行：' + String(value.reason || 'unknown')
       if (value.action === 'create') {
         if (!value.ok) return '生成失败：' + String(value.reason || 'unknown')
         return '日报已生成：' + value.file + '（' + Math.round(value.bytes / 1024) + ' KB，' + value.day + '）'
@@ -1957,7 +1958,7 @@ function parseChronicleLine(line) {
         if (value.reason) return '没有 ' + String(value.day || '') + ' 的日报（' + value.reason + '）'
         return value.body || '（空）'
       }
-      if (!value.reports.length) return '还没有日报；调 jarvis_report action=create 生成今天的'
+      if (!Array.isArray(value.reports) || !value.reports.length) return '还没有日报；调 jarvis_report action=create 生成今天的'
       const rows = value.reports.map((row) => '  ' + row.day + ' · ' + row.bytes + ' B')
       return ['最近 ' + value.reports.length + ' 份日报：'].concat(rows).concat(['生成：action=create，可带 day=YYYY-MM-DD']).join('\n')
     }

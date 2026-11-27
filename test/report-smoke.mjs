@@ -177,6 +177,8 @@ check('USER ratio is a number, not NaN', /USER\.md \d+%/u.test(body), body.match
     const refused = await tool.execute({ day: bad }, {})
     check('an invalid day is refused (' + bad + ')', refused.ok === false && /day/u.test(refused.reason), refused)
   }
+const invalidRender = registered.find((definition) => definition.name === 'jarvis_report').output.render({}, { action: 'invalid', ok: false, reason: 'day must be YYYY-MM-DD' })
+  check('an invalid request renders its reason', /未执行/u.test(invalidRender[0].text), invalidRender[0].text)
   check('an invalid day writes no file', !existsSync(join(dir, 'reports')), existsSync(join(dir, 'reports')))
 }
 
