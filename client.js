@@ -1312,27 +1312,62 @@ window.__ModuleLoader__.load({
       }
       if (this.cometBurst) {
         var bAge = this.time - this.cometBurst.at
-        if (bAge > 1.1) {
+        if (bAge > 1.6) {
           this.cometBurst = null
         } else {
           var bx = this.cometBurst.x
           var by = this.cometBurst.y
           ctx.save()
           ctx.globalCompositeOperation = 'lighter'
-          for (var b = 0; b < 72; b += 1) {
+          // white-hot flash: fast, bright, gone
+          var flashAge = Math.min(1, bAge / 0.28)
+          if (flashAge < 1) {
+            var flashR = R * (0.18 + 0.55 * flashAge)
+            var fg = ctx.createRadialGradient(bx, by, 0, bx, by, flashR)
+            fg.addColorStop(0, rgba('#ffffff', (1 - flashAge) * 0.95))
+            fg.addColorStop(0.28, rgba(hi, (1 - flashAge) * 0.8))
+            fg.addColorStop(0.6, rgba(accent, (1 - flashAge) * 0.35))
+            fg.addColorStop(1, rgba(accent, 0))
+            ctx.fillStyle = fg
+            ctx.beginPath()
+            ctx.arc(bx, by, flashR, 0, TAU)
+            ctx.fill()
+          }
+          // soft expanding halo: several translucent discs, no hard edge
+          var haloP = Math.min(1, bAge / 0.9)
+          for (var hh = 0; hh < 3; hh += 1) {
+            var hr = R * (0.22 + 0.52 * haloP) * (1 + hh * 0.16)
+            var ha = (1 - haloP) * (0.16 - hh * 0.045) * alphaScale
+            if (ha <= 0.002) continue
+            var hg2 = ctx.createRadialGradient(bx, by, hr * 0.72, bx, by, hr)
+            hg2.addColorStop(0, rgba(accent, 0))
+            hg2.addColorStop(0.55, rgba(accent, ha))
+            hg2.addColorStop(1, rgba(accent, 0))
+            ctx.fillStyle = hg2
+            ctx.beginPath()
+            ctx.arc(bx, by, hr, 0, TAU)
+            ctx.fill()
+          }
+          // shards flying out
+          var COUNT2 = 120
+          var shardP = Math.min(1, bAge / 0.55)
+          var shardEase = 1 - Math.pow(1 - shardP, 2.2)
+          for (var b = 0; b < COUNT2; b += 1) {
             var bh = (b * 0.6180339887) % 1
-            var bang = bh * TAU + (b % 4) * 0.5
-            var bdist = R * (0.15 + 0.75 * ((b * 0.4142135624) % 1)) * Math.min(1, bAge / 0.45)
-            var ba = Math.max(0, 1 - bAge / 1.1) * (0.5 - 0.28 * bh) * alphaScale
+            var bang = bh * TAU + (b % 5) * 0.31
+            var bdist = R * (0.12 + 0.92 * ((b * 0.4142135624) % 1)) * shardEase
+            var ba = Math.max(0, 1 - bAge / 1.5) * (0.85 - 0.5 * bh) * alphaScale
+            if (ba <= 0.004) continue
             var bx2 = bx + Math.cos(bang) * bdist
             var by2 = by + Math.sin(bang) * bdist
-            var bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, 6)
+            var bsize = (1.6 + 4.2 * (1 - bh)) * (0.5 + 0.5 * (1 - shardP * 0.5))
+            var bg = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, bsize * 3.2)
             bg.addColorStop(0, rgba(hi, ba))
-            bg.addColorStop(0.45, rgba(accent, ba * 0.45))
+            bg.addColorStop(0.42, rgba(accent, ba * 0.5))
             bg.addColorStop(1, rgba(accent, 0))
             ctx.fillStyle = bg
             ctx.beginPath()
-            ctx.arc(bx2, by2, 6, 0, TAU)
+            ctx.arc(bx2, by2, bsize * 3.2, 0, TAU)
             ctx.fill()
           }
           ctx.restore()
@@ -1735,6 +1770,7 @@ window.__ModuleLoader__.load({
           var fly = this.flyIns[fi]
           var flyAge = this.time - fly.at
           if (flyAge > 2.6) continue
+          if (fly.dead) continue
           keepFly.push(fly)
           var flyP = Math.min(1, Math.max(0, flyAge / 1.35))
           var ease = 1 - Math.pow(1 - flyP, 3)
@@ -1763,11 +1799,33 @@ window.__ModuleLoader__.load({
             ctx.fill()
           }
           if (flyP >= 1) {
-            var sparkLeft = Math.max(0, 1 - (flyAge - 1.35) / 1.0)
-            ctx.fillStyle = rgba(flyTint, 0.52 * sparkLeft * alphaScale)
-            ctx.beginPath()
-            ctx.arc(slotX, slotY, 4 + 11 * (1 - sparkLeft), 0, TAU)
-            ctx.fill()
+            if (!fly.burstAt) fly.burstAt = this.time
+            var mAge = this.time - fly.burstAt
+            if (mAge > 0.8) {
+              fly.dead = true
+            } else {
+              ctx.save()
+              ctx.globalCompositeOperation = 'lighter'
+              var mCount = 30
+              for (var mb = 0; mb < mCount; mb += 1) {
+                var mh = (mb * 0.6180339887) % 1
+                var mAng = mh * TAU
+                var mDist = 34 * (0.25 + 0.75 * ((mb * 0.4142135624) % 1)) * Math.min(1, mAge / 0.32)
+                var mx2 = slotX + Math.cos(mAng) * mDist
+                var my2 = slotY + Math.sin(mAng) * mDist
+                var ma = (1 - mAge / 0.8) * (0.85 - 0.5 * mh) * alphaScale
+                if (ma <= 0.004) continue
+                var mg = ctx.createRadialGradient(mx2, my2, 0, mx2, my2, 5)
+                mg.addColorStop(0, rgba(hi, ma))
+                mg.addColorStop(0.45, rgba(flyTint, ma * 0.55))
+                mg.addColorStop(1, rgba(flyTint, 0))
+                ctx.fillStyle = mg
+                ctx.beginPath()
+                ctx.arc(mx2, my2, 5, 0, TAU)
+                ctx.fill()
+              }
+              ctx.restore()
+            }
           }
         }
         this.flyIns = keepFly
