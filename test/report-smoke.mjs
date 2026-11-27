@@ -225,6 +225,36 @@ const invalidRender = registered.find((definition) => definition.name === 'jarvi
   const body = readFileSync(made.file, 'utf8')
   check('a report with five alerts mentions the remainder', /另有 \d+ 条/u.test(body), body.match(/- 另有 .*/u))
 }
+// --- 8. glued lines keep their labels; no empty heading; create failures say so ---
+{
+  const day = '2026-01-09'
+  const dir = join(root, 'c8')
+  mkdirSync(dir, { recursive: true })
+  const a = JSON.stringify({ t: day + 'T03:00:00.000Z', d: day, s: 's', u: '粘连甲', tools: 1 })
+  const b = JSON.stringify({ t: day + 'T04:00:00.000Z', d: day, s: 's', u: '粘连乙', tools: 1 })
+  const only = JSON.stringify({ t: day + 'T05:00:00.000Z', d: day, s: 's', u: 'MNEMON 运行时记忆快照 条目注解', tools: 1 })
+  writeFileSync(join(dir, 'chronicle.jsonl'), a + b + '\n' + only + '\n')
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: dir, backupDir: join(root, 'b8'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_report')
+  const made = await tool.execute({ day }, {})
+  const body = readFileSync(made.file, 'utf8')
+  check('a glued chronicle line keeps both labels', body.includes('粘连甲') && body.includes('粘连乙'), body.includes('粘连甲') && body.includes('粘连乙'))
+
+  const emptyDir = join(root, 'c8b')
+  mkdirSync(emptyDir, { recursive: true })
+  const onlySnap = join(emptyDir, 'd')
+  mkdirSync(onlySnap, { recursive: true })
+  writeFileSync(join(onlySnap, 'chronicle.jsonl'), only + '\n')
+  const second = makeCtx()
+  apply(second.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: onlySnap, backupDir: join(root, 'b8b'), alerts: false })
+  const tool2 = second.registered.find((definition) => definition.name === 'jarvis_report')
+  const made2 = await tool2.execute({ day }, {})
+  check('a day with only snapshots has no empty heading', !readFileSync(made2.file, 'utf8').includes('最近几轮'), readFileSync(made2.file, 'utf8').includes('最近几轮'))
+
+  const failedRender = tool.output.render({}, { action: 'create', ok: false, reason: 'EPERM: nope' })
+  check('a failed create renders 生成失败', /生成失败/u.test(failedRender[0].text), failedRender[0].text)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

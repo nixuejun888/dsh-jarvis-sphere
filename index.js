@@ -1830,11 +1830,8 @@ function parseChronicleLine(line) {
   function chronicleDay(day, limit) {
     const rows = []
     for (const line of readTailLines(chronicleFile, 0)) {
-      try {
-        const record = JSON.parse(line)
-        if (record && record.d === day) rows.push(record)
-      } catch (err) {
-        void err
+      for (const record of parseChronicleLine(line)) {
+        if (record.d === day) rows.push(record)
       }
     }
     return rows.slice(-Math.max(1, limit || 8))
@@ -1849,13 +1846,13 @@ function parseChronicleLine(line) {
     const dayCount = chronicle.days.get(day)
     lines.push('- 轮次 ' + (dayCount ? dayCount.turns : 0) + ' · 工具 ' + (dayCount ? dayCount.tools : 0))
     const recent = chronicleDay(day, 8)
+      .map((record) => ({ record, raw: clipLabel(record.u || '') }))
+      .filter((entry) => !/^MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性)/u.test(entry.raw))
     if (recent.length) {
       lines.push('- 最近几轮：')
-      for (const record of recent) {
-        const raw = clipLabel(record.u || '')
-        if (/^MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性)/u.test(raw)) continue
-        const label = Array.from(raw).slice(0, 40).join('')
-        lines.push('  - ' + (localStamp(record.t) || '') + ' ' + (label || '(无标签)'))
+      for (const entry of recent) {
+        const label = Array.from(entry.raw).slice(0, 40).join('')
+        lines.push('  - ' + (localStamp(entry.record.t) || '') + ' ' + (label || '(无标签)'))
       }
     }
     lines.push('')
@@ -1949,11 +1946,11 @@ function parseChronicleLine(line) {
     }
     if (!tools || typeof tools.register !== 'function') return () => {}
     const render = (value) => {
-      if (value.ok === false) return '未执行：' + String(value.reason || 'unknown')
       if (value.action === 'create') {
-        if (!value.ok) return '生成失败：' + String(value.reason || 'unknown')
+        if (value.ok === false) return '生成失败：' + String(value.reason || 'unknown')
         return '日报已生成：' + value.file + '（' + Math.round(value.bytes / 1024) + ' KB，' + value.day + '）'
       }
+      if (value.ok === false) return '未执行：' + String(value.reason || 'unknown')
       if (value.action === 'read') {
         if (value.reason) return '没有 ' + String(value.day || '') + ' 的日报（' + value.reason + '）'
         return value.body || '（空）'
