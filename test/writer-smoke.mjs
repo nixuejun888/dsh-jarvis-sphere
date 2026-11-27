@@ -140,6 +140,54 @@ function makeCtx() {
   check('the memory projection is untouched by a user write', untouched.includes('规则 A'), untouched.length)
 }
 
+// --- 6. the review's hard cases: collisions, temp residue, separator variants ---
+{
+  const { applyPlan } = await import('../memory-writer.js')
+  const scratch = join(root, 'hard')
+  mkdirSync(join(scratch, 'runtime'), { recursive: true })
+  const file = join(scratch, 'runtime', 'MEMORY.md')
+  writeFileSync(file, 'A\n§\nB\n§\nC\n')
+
+  // same-millisecond writes must not overwrite each other's archive
+  const now = Date.now()
+  const planOne = planOperation(readFileSync(file, 'utf8'), { action: 'archive', entries: [2], expected: ['B'] })
+  const first = applyPlan(scratch, 'runtime/MEMORY.md', planOne, { now })
+  const planTwo = planOperation(readFileSync(file, 'utf8'), { action: 'archive', entries: [2], expected: ['C'] })
+  const second = applyPlan(scratch, 'runtime/MEMORY.md', planTwo, { now })
+  check('same-millisecond writes get distinct archives', first.ok && second.ok && first.archiveFile !== second.archiveFile, [first.archiveFile, second.archiveFile])
+  check('both archives survive', readFileSync(second.archiveFile, 'utf8').includes('C') && readFileSync(first.archiveFile, 'utf8').includes('B'), [readFileSync(first.archiveFile, 'utf8').includes('B'), readFileSync(second.archiveFile, 'utf8').includes('C')])
+  check('no temp file after success', !existsSync(file + '.jarvis-tmp'), existsSync(file + '.jarvis-tmp'))
+
+  // a failed rename must leave neither a temp file nor an archive
+  const locked = join(root, 'locked')
+  mkdirSync(join(locked, 'runtime'), { recursive: true })
+  mkdirSync(join(locked, 'runtime', 'MEMORY.md'), { recursive: true })
+  const lockedPlan = planOperation('A\n§\nB\n', { action: 'archive', entries: [2] })
+  const failed = applyPlan(locked, 'runtime/MEMORY.md', lockedPlan, { now: Date.now() })
+  check('a failed replace reports a reason', failed.ok === false && /cannot replace/u.test(failed.reason), failed)
+  check('a failed replace leaves no temp file', !existsSync(join(locked, 'runtime', 'MEMORY.md.jarvis-tmp')), existsSync(join(locked, 'runtime', 'MEMORY.md.jarvis-tmp')))
+  check('a failed replace leaves no archive', !existsSync(join(locked, 'runtime', 'archived', 'manual')) || readdirSync(join(locked, 'runtime', 'archived', 'manual')).length === 0, existsSync(join(locked, 'runtime', 'archived', 'manual')) ? readdirSync(join(locked, 'runtime', 'archived', 'manual')) : [])
+
+  // separator variants must not pass the single-entry check
+  const base = 'A\n§\nB\n§\nC\n'
+  for (const [name, body] of [['crlf', 'x\r\n§\r\nY'], ['spaced', 'x\n § \nY'], ['mixed', 'x\n§\r\nY']]) {
+    const plan = planOperation(base, { action: 'rewrite', entries: [1], text: body })
+    check('rewrite rejects a multi-entry replacement (' + name + ')', plan.ok === false && /single entry/u.test(plan.reason), plan.reason)
+  }
+  check('rewrite rejects two selected entries', planOperation(base, { action: 'rewrite', entries: [1, 2], text: 'x' }).ok === false, planOperation(base, { action: 'rewrite', entries: [1, 2], text: 'x' }).reason)
+  check('expected longer than entries is refused', selectEntries(parseEntries(base), { entries: [1], expected: ['a', 'b'] }).ok === false, selectEntries(parseEntries(base), { entries: [1], expected: ['a', 'b'] }).reason)
+
+  // the library only accepts the two projections
+  check('the library refuses another file', applyPlan(scratch, 'runtime/OTHER.md', planOne, { now: Date.now() }).ok === false, applyPlan(scratch, 'runtime/OTHER.md', planOne, { now: Date.now() }).reason)
+
+  // CRLF files keep their line endings
+  const crlfFile = join(root, 'crlf', 'runtime', 'MEMORY.md')
+  mkdirSync(join(root, 'crlf', 'runtime'), { recursive: true })
+  writeFileSync(crlfFile, 'A\r\n§\r\nB\r\n')
+  const crlfPlan = planOperation(readFileSync(crlfFile, 'utf8'), { action: 'archive', entries: [2] })
+  applyPlan(join(root, 'crlf'), 'runtime/MEMORY.md', crlfPlan, { now: Date.now() })
+  check('a CRLF file stays CRLF', readFileSync(crlfFile, 'utf8').includes('\r\n'), JSON.stringify(readFileSync(crlfFile, 'utf8')))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

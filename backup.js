@@ -97,7 +97,8 @@ export function collectSources({ memoryRoot, chronicleFile, personaFile, pluginD
 
       const archivedDir = join(memoryRoot, 'runtime', 'archived')
     if (existsSync(archivedDir)) {
-      const archived = listFiles(archivedDir, DOC_LIMIT + 1, (name) => name.endsWith('.json'))
+      /* include the JSON overflow records and the manual memory archives */
+      const archived = listFiles(archivedDir, DOC_LIMIT + 1, (name) => name.endsWith('.json') || name.endsWith('.md'))
       if (archived.length > DOC_LIMIT) truncated.push('runtime/archived (first ' + DOC_LIMIT + ' of ' + archived.length + '+)')
       for (const file of archived.slice(0, DOC_LIMIT)) {
         sources.push({ label: 'runtime/archived/' + file.slice(archivedDir.length + 1).replace(/\\/gu, '/'), file })

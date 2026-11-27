@@ -1468,6 +1468,8 @@ function parseChronicleLine(line) {
       for (const entry of value.removed) lines.push('  - #' + entry.index + ' ' + entry.preview + '（' + entry.bytes + ' B）')
       if (value.added) lines.push('  + ' + value.added.preview + '（' + value.added.bytes + ' B）')
       if (value.archiveFile) lines.push('  原文归档：' + value.archiveFile)
+      if (value.applied && value.verified === false) lines.push('  ⚠ 写后条目数与预期不符，请重新跑 jarvis_memory_review')
+      if (value.applied && value.auditOk === false) lines.push('  ⚠ 审计行写入失败（写入本身已生效）')
       if (value.snapshot) lines.push('  写入前快照：' + value.snapshot)
       if (!value.applied) lines.push('  确认后执行：同一调用加 confirm: true')
       return lines.join('\n')
@@ -1521,10 +1523,24 @@ function parseChronicleLine(line) {
 
         const backup = createBackup(backupDir, backupSources(), { keep: Number(cfg.backupKeep) || 7 })
         if (!backup.ok) return { ok: false, reason: 'refusing to write without a snapshot: ' + String(backup.reason || 'unknown') }
+        /* A snapshot that silently lost the very file we are about to change is
+           not a snapshot: every source must have copied with a hash. */
+        const manifest = backup.manifest || {}
+        const failedSources = manifest.totals && manifest.totals.failed ? manifest.totals.failed : 0
+        const recorded = Array.isArray(manifest.files) ? manifest.files.find((entry) => entry.label === relative) : undefined
+        if (failedSources > 0 || !recorded || recorded.error || !recorded.sha256) {
+          return {
+            ok: false,
+            reason: 'refusing to write: the snapshot is incomplete ('
+              + (failedSources ? failedSources + ' source(s) failed' : 'no verifiable copy of ' + relative)
+              + '); fix the backup first',
+          }
+        }
         const written = applyPlan(root, relative, plan)
         if (!written.ok) return { ok: false, reason: written.reason }
         const after = readProjection(root, relative)
         const applied = after !== null ? parseEntries(after).length : -1
+        const verified = applied === plan.afterEntries
         const audit = {
           t: new Date().toISOString(),
           action: plan.action,
@@ -1532,11 +1548,18 @@ function parseChronicleLine(line) {
           entries: plan.removed.map((entry) => entry.index),
           beforeEntries: plan.beforeEntries,
           afterEntries: applied,
+          expectedEntries: plan.afterEntries,
+          verified,
           snapshot: backup.dir,
           archive: written.archiveFile,
         }
-        appendAudit(join(chronicleDir, 'memory-audit.jsonl'), audit)
-        return { ok: true, applied: true, ...base, afterEntries: applied, archiveFile: written.archiveFile, snapshot: backup.dir }
+        const auditOk = appendAudit(join(chronicleDir, 'memory-audit.jsonl'), audit)
+        if (!auditOk) warn('memory write applied but the audit line could not be written')
+        const result = { ok: verified, applied: true, ...base, afterEntries: applied, verified, auditOk, archiveFile: written.archiveFile, snapshot: backup.dir }
+        if (!verified) {
+          return { ...result, reason: 'post-write entry count mismatch: expected ' + plan.afterEntries + ', found ' + applied + '; re-run jarvis_memory_review before trusting this' }
+        }
+        return result
       },
     }
     try {
