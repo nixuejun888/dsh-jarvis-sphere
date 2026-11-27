@@ -1,5 +1,5 @@
 # 贾维斯球形神经元背景（Host 行 + Client 浮层）
-# - 记忆：读本机 Mnemon 存储根，把每条记忆钉到球面一颗固定光点上（正文不下发）
+# - 记忆：读本机 Mnemon 存储根，按内容哈希聚类到球面槽位（无条数上限，正文不下发）
 # - 人格：往每个会话的系统提示注入 jarvis:persona，全局生效，可关
 - insert:
     - id: jarvis-sphere
@@ -17,4 +17,4 @@
         persona: true
         # personaText: '覆盖内置的 JARVIS 人设正文'
         memoryDirs: []
-        maxMemoryNodes: 120
+        memorySlots: 0

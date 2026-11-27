@@ -8,7 +8,7 @@
  * owner-only HTTP route and animates the sphere from that snapshot.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -29,8 +29,8 @@ const DEFAULTS = {
   personaText: '',
   /** Extra Mnemon storage roots to probe before the configured one. */
   memoryDirs: [],
-  /** Upper bound on memory points painted on the sphere. */
-  maxMemoryNodes: 120,
+  /** Hash slots for memory clusters; 0 follows `nodeCount`. */
+  memorySlots: 0,
 }
 
 /** System-prompt section that carries the persona; a global registration. */
@@ -54,6 +54,8 @@ const PERSONA_TEXT = [
 const MEMORY_REFRESH_MS = 3000
 /** Importance → rank used by the Client half for size and glow. */
 const IMPORTANCE_RANK = { critical: 2, normal: 1, low: 0 }
+/** Fixed ticks on the document ring; archives stay legible at any size. */
+const DOC_TICKS = 96
 
 
 /** Sliding window used for every rate. */
@@ -100,55 +102,155 @@ function readJsonFile(file) {
   }
 }
 
-/** Where Mnemon keeps `runtime/`, `documents/` and `data/`. */
-function memoryRoots(ctx, cfg) {
-  const roots = []
-  const push = (value) => {
-    if (typeof value !== 'string' || !value) return
-    if (roots.indexOf(value) === -1) roots.push(value)
+/** Read either a plain value or the `SyncedConfigRef` wrapper around it. */
+function configValue(value) {
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'string') return value
+  if (typeof value !== 'object') return undefined
+  for (const read of ['get', 'snapshot', 'value', 'current']) {
+    try {
+      const inner = typeof read === 'function' ? undefined : value[read]
+      if (typeof inner === 'string') return inner
+      if (read === 'get' && typeof value.get === 'function') {
+        const got = value.get()
+        if (typeof got === 'string') return got
+        if (got && typeof got === 'object') {
+          for (const key of ['dataDir', 'value', 'current']) {
+            const nested = got[key]
+            if (typeof nested === 'string') return key === 'dataDir' ? nested : undefined
+          }
+          const nestedConfig = got.config && got.config.dataDir
+          if (typeof nestedConfig === 'string') return nestedConfig
+        }
+      }
+    } catch (err) {
+      void err
+    }
   }
-  for (const dir of Array.isArray(cfg.memoryDirs) ? cfg.memoryDirs : []) push(dir)
+  return undefined
+}
+
+/**
+ * A custom Mnemon `dataDir` lives in the profile patch, not in the package's
+ * synced Config, so read the profile patch as the last resort. Only the
+ * `mnemon` row's own `dataDir` is taken; nothing else from the patch is read.
+ */
+function profilePatchRoots() {
+  const dirs = []
+  const pushDir = (dir) => {
+    if (typeof dir === 'string' && dir && dirs.indexOf(dir) === -1) dirs.push(dir)
+  }
+  pushDir(process.env.DSH_PROFILE_DIR)
   try {
-    const configService = typeof ctx.get === 'function' ? ctx.get('config') : undefined
-    if (configService && typeof configService.resolveConfigByPackage === 'function') {
-      const synced = configService.resolveConfigByPackage('dsh-mnemon')
-      const value = synced && typeof synced.get === 'function' ? synced.get() : synced
-      const dir = value && typeof value === 'object' ? value.dataDir || (value.config && value.config.dataDir) : undefined
-      push(dir)
+    const base = join(homedir(), '.dsh', 'profiles')
+    for (const entry of readdirSync(base, { withFileTypes: true })) {
+      if (entry.isDirectory()) pushDir(join(base, entry.name))
     }
   } catch (err) {
     void err
   }
+  const out = []
+  for (const dir of dirs) {
+    try {
+      const text = readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
+      const match = /- id:\s*mnemon[ \t]*\r?\n(?:[ \t].*\r?\n){0,80}?[ \t]+dataDir:\s*['"]?([^'"\r\n#]+)['"]?/u.exec(text)
+      const found = match && match[1] ? match[1].trim() : ''
+      if (found && out.indexOf(found) === -1) out.push(found)
+    } catch (err) {
+      void err
+    }
+  }
+  return out
+}
+
+/** Where Mnemon keeps `runtime/`, `documents/` and `data/`. */
+function memoryRoots(ctx, cfg) {
+  const roots = []
+  const explicit = []
+  const push = (value) => {
+    if (typeof value !== 'string' || !value) return
+    if (roots.indexOf(value) === -1) roots.push(value)
+  }
+  for (const dir of Array.isArray(cfg.memoryDirs) ? cfg.memoryDirs : []) {
+    push(dir)
+    if (typeof dir === 'string' && dir) explicit.push(dir)
+  }
+  try {
+    const configService = typeof ctx.get === 'function' ? ctx.get('config') : undefined
+    if (configService && typeof configService.resolveConfigByPackage === 'function') {
+      const synced = configService.resolveConfigByPackage('dsh-mnemon')
+      if (synced && typeof synced === 'object') {
+        const direct = synced.dataDir !== undefined ? synced.dataDir : synced.config && synced.config.dataDir
+        push(configValue(direct))
+      }
+    }
+  } catch (err) {
+    void err
+  }
+  for (const dir of profilePatchRoots()) push(dir)
   push(join(homedir(), '.mnemon'))
-  return roots
+  return { roots, explicit }
+}
+
+/** Newest `runtime/memories.json` wins: the store being written is the live one. */
+function pickMemoryRoot(candidates, explicit) {
+  let best = ''
+  let bestAt = -1
+  for (const dir of candidates) {
+    const file = join(dir, 'runtime', 'memories.json')
+    if (!existsSync(file)) continue
+    if (explicit.indexOf(dir) !== -1) return { root: dir, runtime: readJsonFile(file) }
+    let at = 0
+    try {
+      at = statSync(file).mtimeMs
+    } catch (err) {
+      at = 0
+    }
+    if (at > bestAt) {
+      bestAt = at
+      best = dir
+    }
+  }
+  return best ? { root: best, runtime: readJsonFile(join(best, 'runtime', 'memories.json')) } : { root: '', runtime: undefined }
 }
 
 /**
  * Project the local memory store onto plain numbers the Client half can draw:
- * one slot per runtime entry, plus the space and document counts. Entry text
- * never leaves the Host — only its hash, target and importance do.
+ * hash slots plus the document tick ring. Entry text never leaves the Host —
+ * only slot index, type, importance, age and cluster size do.
  */
 function projectMemory(ctx, cfg, cache) {
   const now = Date.now()
   if (cache.value && now - cache.at < MEMORY_REFRESH_MS) return cache.value
   cache.at = now
 
-  let root = ''
-  let runtime
-  for (const dir of memoryRoots(ctx, cfg)) {
-    const file = join(dir, 'runtime', 'memories.json')
-    if (!existsSync(file)) continue
-    root = dir
-    runtime = readJsonFile(file)
-    if (runtime) break
-  }
+  const { roots, explicit } = memoryRoots(ctx, cfg)
+  const picked = pickMemoryRoot(roots, explicit)
+  const root = picked.root
+  const runtime = picked.runtime
   if (!root || !runtime || !Array.isArray(runtime.entries)) {
-    cache.value = { ok: false, nodes: [], total: 0 }
+    cache.value = { ok: false, slots: [], docTicks: [], total: 0 }
     return cache.value
   }
 
-  const nodes = []
+  // Every entry lands in a hash slot, so the payload is bounded by the slot
+  // count instead of the memory count: 5 entries and 5,000 entries cost the
+  // same bytes on the wire, and slots merge into one brighter point.
+  const requestedSlots = Math.round(num(cfg.memorySlots, 0))
+  const slotSpace = clamp(requestedSlots > 0 ? requestedSlots : cfg.nodeCount, 16, 1400)
+  const slots = new Map()
   const counts = { user: 0, memory: 0, critical: 0, fresh: 0 }
+
+  function slotFor(hash) {
+    const index = hash % slotSpace
+    let slot = slots.get(index)
+    if (!slot) {
+      slot = { s: index, t: 'memory', n: 0, i: 0, a: -1, f: 0, mix: {} }
+      slots.set(index, slot)
+    }
+    return slot
+  }
+
   for (const entry of runtime.entries) {
     if (!entry || typeof entry.content !== 'string' || !entry.content) continue
     const target = entry.target === 'user' ? 'user' : 'memory'
@@ -158,34 +260,46 @@ function projectMemory(ctx, cfg, cache) {
     const ageDays = Number.isFinite(stamp) ? Math.max(0, Math.round((now - stamp) / 86400000)) : -1
     const fresh = Number.isFinite(stamp) && now - stamp < 86400000
     if (fresh) counts.fresh += 1
-    nodes.push({
-      t: target,
-      i: IMPORTANCE_RANK[entry.importance] ?? 1,
-      a: ageDays,
-      f: fresh ? 1 : 0,
-      k: hash32(entry.content),
-    })
+    const slot = slotFor(hash32(entry.content))
+    slot.n += 1
+    slot.i = Math.max(slot.i, IMPORTANCE_RANK[entry.importance] ?? 1)
+    slot.f = Math.max(slot.f, fresh ? 1 : 0)
+    if (ageDays >= 0 && (slot.a < 0 || ageDays < slot.a)) slot.a = ageDays
+    slot.mix[target] = (slot.mix[target] || 0) + 1
   }
 
   const bodies = readJsonFile(join(root, 'data', '.dsh-memory-bodies.json'))
   const spaces = bodies && Array.isArray(bodies.bodies) ? bodies.bodies : []
   for (const body of spaces) {
     if (!body || typeof body !== 'object') continue
-    nodes.push({ t: 'space', i: body.active === false ? 0 : 1, a: 0, f: 0, k: hash32(body.id || body.name || 'space') })
+    const slot = slotFor(hash32(body.id || body.name || 'space'))
+    slot.n += 1
+    slot.i = Math.max(slot.i, body.active === false ? 0 : 1)
+    slot.mix.space = (slot.mix.space || 0) + 1
   }
 
+  // Documents live on the outer ring as 96 fixed ticks: dense archives stay
+  // legible without ever competing with working memory for sphere slots.
   const index = readJsonFile(join(root, 'documents', 'index.json'))
   const documents = index && Array.isArray(index.documents) ? index.documents : []
+  const docTicks = new Array(DOC_TICKS).fill(0)
   for (const doc of documents) {
     if (!doc || typeof doc !== 'object') continue
-    const stamp = Date.parse(doc.updatedAt || doc.createdAt || '')
-    const ageDays = Number.isFinite(stamp) ? Math.max(0, Math.round((now - stamp) / 86400000)) : -1
-    nodes.push({ t: 'doc', i: 0, a: ageDays, f: 0, k: hash32(doc.id || doc.filename || doc.title || 'doc') })
+    const bucket = hash32(doc.id || doc.filename || doc.title || 'doc') % DOC_TICKS
+    docTicks[bucket] += 1
   }
 
-  const limit = clamp(Math.round(num(cfg.maxMemoryNodes, DEFAULTS.maxMemoryNodes)), 0, 500)
+  const merged = []
+  for (const slot of slots.values()) {
+    const mix = Object.keys(slot.mix)
+    slot.t = mix.length > 1 ? 'mixed' : mix[0] || 'memory'
+    merged.push(slot)
+  }
+  merged.sort((a, b) => b.i - a.i || b.n - a.n || a.s - b.s)
+
   cache.value = {
     ok: true,
+    root: root.split(/[\\/]/).filter(Boolean).pop() || '',
     total: counts.user + counts.memory,
     user: counts.user,
     memory: counts.memory,
@@ -193,7 +307,9 @@ function projectMemory(ctx, cfg, cache) {
     fresh: counts.fresh,
     spaces: spaces.length,
     documents: documents.length,
-    nodes: nodes.slice(0, limit),
+    slots: merged.map((slot) => ({ s: slot.s, t: slot.t, n: slot.n, i: slot.i, a: slot.a, f: slot.f })),
+    docTicks,
+    slotSpace,
   }
   return cache.value
 }
@@ -244,6 +360,9 @@ function callIdOf(data) {
 
 export const inject = ['webServer']
 
+/** Test hooks: the pure helpers the harness exercises directly. */
+export const __test = { configValue, memoryRoots, pickMemoryRoot, hash32 }
+
 export function apply(ctx, config) {
   const cfg = Object.assign({}, DEFAULTS, config && typeof config === 'object' ? config : {})
   cfg.nodeCount = clamp(Math.round(num(cfg.nodeCount, DEFAULTS.nodeCount)), 80, 1400)
@@ -251,7 +370,7 @@ export function apply(ctx, config) {
   cfg.opacity = clamp(num(cfg.opacity, DEFAULTS.opacity), 0, 1)
   cfg.offsetX = clamp(num(cfg.offsetX, 0), -4000, 4000)
   cfg.offsetY = clamp(num(cfg.offsetY, 0), -4000, 4000)
-  cfg.maxMemoryNodes = clamp(Math.round(num(cfg.maxMemoryNodes, DEFAULTS.maxMemoryNodes)), 0, 500)
+  cfg.memorySlots = clamp(Math.round(num(cfg.memorySlots, 0)), 0, 1400)
 
   /** Permanent character: on unless the row turns it off. */
   const personaOn = cfg.persona !== false

@@ -433,8 +433,8 @@ window.__ModuleLoader__.load({
         counters: data.counters && typeof data.counters === 'object' ? data.counters : {},
         recent: Array.isArray(data.recent) ? data.recent : [],
       }
-      /* 记忆投影：条目自身永不离开 Host，这里只拿到 hash/类型/重要度/年龄 */
-      var nextMemory = data.memory && Array.isArray(data.memory.nodes) ? data.memory : null
+      /* 记忆投影：条目自身永不离开 Host，这里只拿到聚类槽位/类型/重要度/年龄 */
+      var nextMemory = data.memory && Array.isArray(data.memory.slots) ? data.memory : null
       var prevMemoryTotal = this.memory && this.memory.ok ? Number(this.memory.total) || 0 : 0
       this.memory = nextMemory
       this.persona = data.persona && typeof data.persona === 'object' ? data.persona : null
@@ -454,30 +454,32 @@ window.__ModuleLoader__.load({
       if (!prevRunning && busy) this.burst(0.35)
     }
 
-    /** 一条记忆占一颗固定光点：hash 决定位置，重启后仍落在同一处 */
+    /**
+     * 一组记忆占一颗光点：Host 已按 hash 聚类，这里只把槽位映射到球面节点。
+     * 条目再多也只是同一颗光点更亮，不会因为上限被截断。
+     */
     SphereEngine.prototype.memorySlots = function (memory) {
       if (this.memoryRef === memory && this.memorySlotsCache) return this.memorySlotsCache
       var total = this.nodes.length || 1
-      var used = {}
+      var list = Array.isArray(memory.slots) ? memory.slots : []
       var out = []
-      for (var i = 0; i < memory.nodes.length; i++) {
-        var entry = memory.nodes[i]
+      for (var i = 0; i < list.length; i++) {
+        var entry = list[i]
         if (!entry) continue
-        var slot = ((entry.k >>> 0) % total + total) % total
-        var guard = 0
-        while (used[slot] && guard < total) {
-          slot = (slot + 1) % total
-          guard++
-        }
-        if (used[slot]) break
-        used[slot] = 1
-        var type = entry.t === 'user' ? 'user' : entry.t === 'space' ? 'space' : entry.t === 'doc' ? 'doc' : 'memory'
+        var raw = Number(entry.s)
+        if (!isFinite(raw)) continue
+        var type =
+          entry.t === 'user' ? 'user'
+            : entry.t === 'space' ? 'space'
+              : entry.t === 'mixed' ? 'mixed'
+                : 'memory'
         out.push({
-          idx: slot,
+          idx: ((raw % total) + total) % total,
           t: type,
           i: Number(entry.i) || 0,
           a: Number(entry.a),
           f: !!entry.f,
+          n: Math.max(1, Number(entry.n) || 1),
         })
       }
       this.memoryRef = memory
@@ -789,16 +791,16 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // ---- 记忆光点：每颗都是一条记忆（用户画像 / 工作记忆 / 记忆空间 / 文档） ----
+      // ---- 记忆光点：一颗光点可能是一组记忆（Host 按 hash 聚类，永不上限截断） ----
       var memory = this.memory
-      if (memory && memory.ok && Array.isArray(memory.nodes) && memory.nodes.length) {
+      if (memory && memory.ok && Array.isArray(memory.slots) && memory.slots.length) {
         var slots = this.memorySlots(memory)
         var memPalette = {
           user: pal.amber || accent,
           /* 工作记忆是最多的一类：偏白的冷光，才不会和球壳的青线糊在一起 */
           memory: mix(pal.cyan || base, hi, 0.6),
           space: pal.violet || base,
-          doc: pal.green || base,
+          mixed: mix(pal.amber || accent, pal.cyan || base, 0.5),
         }
         var born = this.memoryBornAt ? Math.max(0, 1 - (this.time - this.memoryBornAt) / 2.4) : 0
         for (var mm = 0; mm < slots.length; mm++) {
@@ -809,13 +811,15 @@ window.__ModuleLoader__.load({
           // 旧记忆变暗但不熄灭：球上留下的都是真的记过的东西
           var ageFade = isFinite(ms.a) && ms.a >= 0 ? Math.max(0.42, 1 - ms.a / 150) : 0.85
           var tint = memPalette[ms.t] || base
-          var coreA = (0.34 + 0.62 * mDepth) * alphaScale * ageFade
+          /* 抱团的光点更亮更大：n 条记忆挤在同一个槽里时，用对数放大读得出来 */
+          var weight = Math.log(1 + ms.n) / Math.LN2
+          var coreA = (0.34 + 0.62 * mDepth) * alphaScale * ageFade * Math.min(1.9, 1 + 0.22 * weight)
           if (coreA < 0.012) continue
           var mx = px[mIdx]
           var my = py[mIdx]
           var breath = ms.f || born > 0 ? Math.sin(this.time * 3.1 + mm * 0.7) * 0.5 + 0.5 : 0.22
           var twinkle = 0.78 + 0.22 * Math.sin(this.time * 2.2 + mm * 1.7)
-          var mSize = 2.0 + mImp * 1.2
+          var mSize = (2.0 + mImp * 1.2) * (1 + Math.min(0.55, 0.16 * weight))
           var halo = mSize * (3.0 + 1.0 * breath + born * 2.4)
           ctx.fillStyle = rgba(tint, coreA * (0.16 + 0.2 * breath + 0.34 * born) * twinkle)
           ctx.beginPath()
@@ -829,6 +833,35 @@ window.__ModuleLoader__.load({
           ctx.lineWidth = mImp >= 2 ? 1 : 0.7
           ctx.beginPath()
           ctx.arc(mx, my, mSize * (1.75 + breath * 0.35), 0, TAU)
+          ctx.stroke()
+        }
+      }
+
+      // ---- 文档刻度环：文档归档再多，也只是环上的刻度更密更亮 ----
+      var docTicks = memory && memory.ok && Array.isArray(memory.docTicks) ? memory.docTicks : null
+      if (docTicks && docTicks.length) {
+        var ringR = R * 1.06
+        var ringSquash = 0.4
+        var ringTilt = -0.62
+        var cTilt = Math.cos(ringTilt)
+        var sTilt = Math.sin(ringTilt)
+        var docRot = this.spin * 0.1 * 8
+        var docColor = pal.green || base
+        for (var di = 0; di < docTicks.length; di++) {
+          var count = Number(docTicks[di]) || 0
+          if (count <= 0) continue
+          var ang = (di / docTicks.length) * TAU + docRot
+          var ex = Math.cos(ang) * ringR
+          var ey = Math.sin(ang) * ringR * ringSquash
+          var dx = cx + ex * cTilt - ey * sTilt
+          var dy = cy + ex * sTilt + ey * cTilt
+          var tickLen = 2 + Math.min(7, Math.log(1 + count) / Math.LN2) * 1.4
+          var tickA = (0.1 + Math.min(0.55, count * 0.09)) * alphaScale
+          ctx.strokeStyle = rgba(docColor, tickA)
+          ctx.lineWidth = count > 2 ? 1.4 : 1
+          ctx.beginPath()
+          ctx.moveTo(dx, dy)
+          ctx.lineTo(dx + Math.cos(ang) * tickLen, dy + Math.sin(ang) * tickLen * ringSquash)
           ctx.stroke()
         }
       }

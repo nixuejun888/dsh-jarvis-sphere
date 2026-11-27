@@ -1,110 +1,165 @@
-// Harness for the memory projection and the persona section: exercises the
-// Host half against a fake Cordis context that exposes `config` and
-// `systemPrompt`, and against whatever Mnemon data root this machine has.
-import { existsSync, readdirSync } from 'node:fs'
+// Harness for the memory projection and the persona section.
+//
+// Two scenarios: whatever Mnemon store this machine has, and a synthetic store
+// with 5,000 entries plus 300 documents that proves the projection is bounded
+// by hash slots instead of by entry count (no truncation, no payload growth).
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { apply } from '../index.js'
-
-const candidates = [
-  process.env.DSH_MNEMON_DATA_DIR,
-  'D:\\AI\\记忆数据',
-  join(homedir(), '.mnemon'),
-].filter(Boolean)
-const dataDir = candidates.find((dir) => existsSync(join(dir, 'runtime', 'memories.json')))
-
-if (!dataDir) {
-  console.log('SKIP memory projection: no Mnemon data root with runtime/memories.json')
-  process.exit(0)
-}
-
-const routes = new Map()
-const sections = []
-const effects = []
-const ctx = {
-  on() {
-    return () => {}
-  },
-  effect(execute) {
-    const dispose = execute()
-    effects.push(typeof dispose === 'function' ? dispose : () => {})
-    return effects[effects.length - 1]
-  },
-  get(name) {
-    if (name === 'config') {
-      return {
-        resolveConfigByPackage(pkg) {
-          return pkg === 'dsh-mnemon' ? { dataDir } : undefined
-        },
-      }
-    }
-    if (name === 'systemPrompt') {
-      return {
-        section(section) {
-          sections.push(section)
-          return () => {
-            const at = sections.indexOf(section)
-            if (at >= 0) sections.splice(at, 1)
-          }
-        },
-      }
-    }
-    return undefined
-  },
-  webServer: {
-    register(route) {
-      const key = route.kind + ' ' + route.path
-      if (routes.has(key)) throw new Error('duplicate route')
-      routes.set(key, route)
-      return () => routes.delete(key)
-    },
-  },
-  agents: { list: () => [] },
-  logger: { warn(message) { console.log('LOG', message) } },
-}
-
-const dispose = apply(ctx, { nodeCount: 300 })
-const route = routes.get('exact /dsh-jarvis/state')
-if (!route) {
-  console.log('FAIL route missing')
-  process.exit(1)
-}
-let payload = ''
-route.handler({ method: 'GET' }, { statusCode: 0, setHeader() {}, end(body) { payload += body } })
-const snap = JSON.parse(payload)
+import { apply, __test } from '../index.js'
 
 const results = []
 function check(label, ok, extra) {
   results.push({ label, ok, extra })
 }
 
-// Persona: one global section with our own name and text.
-check('persona section registered', sections.length === 1, sections.length)
-check('persona section name', sections[0]?.name === 'jarvis:persona', sections[0]?.name)
-check('persona text present', /JARVIS/.test(String(sections[0]?.text || '')), String(sections[0]?.text || '').slice(0, 20))
-check('snapshot reports the persona', snap.persona?.active === true && snap.persona?.name === 'JARVIS', snap.persona)
+function makeCtx(dataDir) {
+  const routes = new Map()
+  const sections = []
+  const effects = []
+  const ctx = {
+    on() {
+      return () => {}
+    },
+    effect(execute) {
+      const dispose = execute()
+      effects.push(typeof dispose === 'function' ? dispose : () => {})
+      return effects[effects.length - 1]
+    },
+    get(name) {
+      if (name === 'config') {
+        return {
+          resolveConfigByPackage(pkg) {
+            return pkg === 'dsh-mnemon' ? { dataDir } : undefined
+          },
+        }
+      }
+      if (name === 'systemPrompt') {
+        return {
+          section(section) {
+            sections.push(section)
+            return () => {
+              const at = sections.indexOf(section)
+              if (at >= 0) sections.splice(at, 1)
+            }
+          },
+        }
+      }
+      return undefined
+    },
+    webServer: {
+      register(route) {
+        const key = route.kind + ' ' + route.path
+        if (routes.has(key)) throw new Error('duplicate route')
+        routes.set(key, route)
+        return () => routes.delete(key)
+      },
+    },
+    agents: { list: () => [] },
+    logger: { warn(message) { console.log('LOG', message) } },
+  }
+  return { ctx, routes, sections, effects }
+}
 
-// Memory projection: counts match the files on disk, nodes carry no content.
-const memory = snap.memory
-check('memory projection ok', memory?.ok === true, memory?.ok)
-check('memory total matches entries', memory?.total === memory?.user + memory?.memory && memory.total > 0, [memory?.total, memory?.user, memory?.memory])
-check('spaces projected', (memory?.spaces || 0) >= 0, memory?.spaces)
-check('documents projected', (memory?.documents || 0) >= 0, memory?.documents)
-check('nodes capped', Array.isArray(memory?.nodes) && memory.nodes.length > 0, memory?.nodes?.length)
-const first = memory?.nodes?.[0] || {}
-check('node has target/importance/hash', typeof first.t === 'string' && typeof first.i === 'number' && typeof first.k === 'number', first)
-check('nodes carry no text', Object.keys(first).sort().join(',') === 'a,f,i,k,t', Object.keys(first).sort().join(','))
+function readState(routes) {
+  const route = routes.get('exact /dsh-jarvis/state')
+  if (!route) return { status: 0, text: '' }
+  let payload = ''
+  const res = { statusCode: 0, setHeader() {}, end(body) { payload += body } }
+  route.handler({ method: 'GET' }, res)
+  return { status: res.statusCode, text: payload, body: payload ? JSON.parse(payload) : null }
+}
 
-// Document indices must not leak titles either.
-check('snapshot carries no document titles', !/relativePath|\.md"/.test(payload), payload.length)
+// ---- scenario 1: a synthetic store far past the old 120-node cap ----
+const started = Date.now()
+const bigDir = mkdtempSync(join(tmpdir(), 'jarvis-mem-'))
+mkdirSync(join(bigDir, 'runtime'), { recursive: true })
+mkdirSync(join(bigDir, 'documents'), { recursive: true })
+mkdirSync(join(bigDir, 'data'), { recursive: true })
+const entries = []
+for (let i = 0; i < 5000; i += 1) {
+  entries.push({
+    content: 'synthetic memory entry number ' + String(i),
+    target: i % 5 === 0 ? 'user' : 'memory',
+    importance: i % 17 === 0 ? 'critical' : i % 3 === 0 ? 'low' : 'normal',
+    created_at: new Date(Date.now() - i * 3600_000).toISOString(),
+    updated_at: new Date(Date.now() - i * 3600_000).toISOString(),
+  })
+}
+writeFileSync(join(bigDir, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries }))
+const docs = []
+for (let i = 0; i < 300; i += 1) {
+  docs.push({ id: 'doc-' + String(i), title: 'Private title ' + String(i), filename: 'secret-' + String(i) + '.md', updatedAt: new Date().toISOString() })
+}
+writeFileSync(join(bigDir, 'documents', 'index.json'), JSON.stringify({ version: 1, documents: docs }))
+writeFileSync(join(bigDir, 'data', '.dsh-memory-bodies.json'), JSON.stringify({ version: 1, bodies: [{ id: 'space-a', name: 'A', active: true }] }))
 
-// The loader ignores apply's return value; a fiber unload disposes the effects.
-dispose()
-const failedBefore = results.filter((r) => !r.ok).length
-for (const release of effects.splice(0)) release()
-void failedBefore
-check('dispose removes the route', routes.size === 0, routes.size)
-check('dispose removes the persona section', sections.length === 0, sections.length)
+{
+  const { ctx, routes, sections, effects } = makeCtx(bigDir)
+  apply(ctx, { nodeCount: 460, memorySlots: 0 })
+  const state = readState(routes)
+  const memory = state.body?.memory
+  check('big store: all 5,000 entries counted', memory?.total === 5000, memory?.total)
+  check('big store: documents counted', memory?.documents === 300, memory?.documents)
+  check('big store: slots bounded by nodeCount', Array.isArray(memory?.slots) && memory.slots.length <= 460, memory?.slots?.length)
+  check('big store: slots cluster (n > 1)', (memory?.slots || []).some((s) => s.n > 1), (memory?.slots || []).map((s) => s.n).sort((a, b) => b - a).slice(0, 3))
+  check('big store: payload stays small', state.text.length < 60000, state.text.length)
+  check('big store: 96 document ticks', memory?.docTicks?.length === 96, memory?.docTicks?.length)
+  check('big store: ticks cover every document', memory?.docTicks?.reduce((a, b) => a + b, 0) === 300, memory?.docTicks?.reduce((a, b) => a + b, 0))
+  check('big store: no entry text on the wire', !state.text.includes('synthetic memory entry'), state.text.length)
+  check('big store: no document titles on the wire', !state.text.includes('Private title') && !state.text.includes('secret-'), state.text.length)
+  check('persona section registered', sections.length === 1 && sections[0]?.name === 'jarvis:persona', sections[0]?.name)
+  check('persona text present', /JARVIS/.test(String(sections[0]?.text || '')), String(sections[0]?.text || '').slice(0, 16))
+  for (const release of effects.splice(0)) release()
+  check('unload removes the route', routes.size === 0, routes.size)
+  check('unload removes the persona', sections.length === 0, sections.length)
+  console.log('synthetic scenario took', Date.now() - started, 'ms')
+}
+rmSync(bigDir, { recursive: true, force: true })
+
+// ---- scenario 2: store discovery (a stale default must not shadow the live store) ----
+{
+  const staleDir = mkdtempSync(join(tmpdir(), 'jarvis-stale-'))
+  const liveDir = mkdtempSync(join(tmpdir(), 'jarvis-live-'))
+  for (const [dir, count, ageMs] of [[staleDir, 2, 7200_000], [liveDir, 14, 0]]) {
+    mkdirSync(join(dir, 'runtime'), { recursive: true })
+    const list = []
+    for (let i = 0; i < count; i += 1) {
+      const at = new Date(Date.now() - ageMs).toISOString()
+      list.push({ content: 'entry ' + String(i) + ' of ' + dir, target: 'memory', importance: 'normal', created_at: at, updated_at: at })
+    }
+    const file = join(dir, 'runtime', 'memories.json')
+    writeFileSync(file, JSON.stringify({ version: 1, entries: list }))
+    const stamp = new Date(Date.now() - ageMs)
+    utimesSync(file, stamp, stamp)
+  }
+  check('config refs are unwrapped', __test.configValue({ get: () => 'X' }) === 'X' && __test.configValue('Y') === 'Y', [__test.configValue({ get: () => 'X' }), __test.configValue('Y')])
+  check('newest store wins by default', __test.pickMemoryRoot([staleDir, liveDir], []).root === liveDir, __test.pickMemoryRoot([staleDir, liveDir], []).root === liveDir)
+  check('explicit memoryDirs wins', __test.pickMemoryRoot([staleDir, liveDir], [staleDir]).root === staleDir, __test.pickMemoryRoot([staleDir, liveDir], [staleDir]).root === staleDir)
+
+  const { ctx, routes } = makeCtx(liveDir)
+  apply(ctx, { memoryDirs: [liveDir] })
+  check('explicit root is the one projected', readState(routes).body?.memory?.total === 14, readState(routes).body?.memory?.total)
+  rmSync(staleDir, { recursive: true, force: true })
+  rmSync(liveDir, { recursive: true, force: true })
+}
+
+// ---- scenario 3: this machine's real store, when it exists ----
+const candidates = [process.env.DSH_MNEMON_DATA_DIR, 'D:\\AI\\记忆数据', join(homedir(), '.mnemon')].filter(Boolean)
+const realDir = candidates.find((dir) => existsSync(join(dir, 'runtime', 'memories.json')))
+if (realDir) {
+  const { ctx, routes } = makeCtx(realDir)
+  apply(ctx, { nodeCount: 460 })
+  const state = readState(routes)
+  const memory = state.body?.memory
+  check('real store: projection ok', memory?.ok === true, memory?.ok)
+  check('real store: totals add up', memory?.total === (memory?.user || 0) + (memory?.memory || 0), [memory?.total, memory?.user, memory?.memory])
+  check('real store: slots present', Array.isArray(memory?.slots) && memory.slots.length > 0, memory?.slots?.length)
+  check('real store: slots carry no text', Object.keys(memory?.slots?.[0] || {}).sort().join(',') === 'a,f,i,n,s,t', Object.keys(memory?.slots?.[0] || {}).sort().join(','))
+} else {
+  console.log('SKIP real store: no Mnemon data root found')
+}
 
 const failed = results.filter((r) => !r.ok)
 for (const r of results) console.log((r.ok ? 'PASS ' : 'FAIL ') + r.label + (r.extra === undefined ? '' : '  [' + JSON.stringify(r.extra) + ']'))
