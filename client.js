@@ -543,6 +543,7 @@ window.__ModuleLoader__.load({
         var dx = event.clientX - geo.cx
         var dy = event.clientY - geo.cy
         if (dx * dx + dy * dy > geo.R * geo.R) return
+        self.focusPulse = { x: event.clientX, y: event.clientY, at: Date.now() }
         self.loadPanel('overview', { x: event.clientX, y: event.clientY })
       }
       this.onKeyDown = function (event) {
@@ -1585,18 +1586,23 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // ---- 工具冲击波 ----
+      // ---- 工具事件：一圈粒子爆开（不再画弧线） ----
       for (var wi = 0; wi < this.waves.length; wi++) {
         var wave = this.waves[wi]
         var wr = R * wave.r
-        ctx.strokeStyle = rgba(accent, wave.a * 0.35 * alphaScale)
-        ctx.lineWidth = 1.6
-        ctx.beginPath()
-        ctx.arc(cx, cy, wr, 0, TAU)
-        ctx.stroke()
-        ctx.strokeStyle = rgba(hi, wave.a * 0.12 * alphaScale)
-        ctx.lineWidth = 4
-        ctx.stroke()
+        var burst = 26
+        for (var bi = 0; bi < burst; bi += 1) {
+          var bh = (bi * 0.6180339887) % 1
+          var bAng = bh * TAU + wi * 0.7
+          var bJitter = 1 + (bh - 0.5) * 0.16
+          var bx = cx + Math.cos(bAng) * wr * bJitter
+          var by = cy + Math.sin(bAng) * wr * bJitter * 0.86
+          var bAlpha = wave.a * (0.55 - 0.35 * bh) * alphaScale
+          ctx.fillStyle = rgba(bh > 0.6 ? accent : hi, Math.max(0, bAlpha))
+          ctx.beginPath()
+          ctx.arc(bx, by, 1.4 + 2.2 * (1 - bh), 0, TAU)
+          ctx.fill()
+        }
       }
 
       // ---- 同心倾斜环 + 刻度（球体外的"仪表层"） ----
@@ -1789,7 +1795,7 @@ window.__ModuleLoader__.load({
         var rad = R * (1.03 + 0.30 * h1)
         var dir = h3 > 0.5 ? 1 : -1
         var speed = (0.04 + 0.42 * h2) * dir * boost
-        var ang = h3 * TAU + t * speed
+        var ang = h3 * TAU + t * speed + t * 0.035 * (h1 - 0.5)
         var tilt = h2 * 1.2 - 0.6
         var squash = 0.30 + 0.55 * h3
         var ox = Math.cos(ang) * rad
@@ -1799,9 +1805,14 @@ window.__ModuleLoader__.load({
         var depth = (Math.sin(ang) + 1) / 2
         var size = (0.7 + 2.1 * h2) * (0.5 + 0.5 * depth)
         var twinkle = 0.55 + 0.45 * Math.sin(t * (1.1 + h3 * 2.1) + i * 0.7)
-        var a = (0.14 + 0.5 * depth) * twinkle * alpha * (0.7 + 0.6 * lit)
-        var tint = h1 > 0.88 ? accent : (h2 > 0.72 ? mix(base, hi, 0.65) : base)
-        ctx.fillStyle = rgba(tint, a * 0.22)
+        var a = (0.08 + 0.30 * depth) * twinkle * alpha * (0.7 + 0.6 * lit)
+        var warm = (Number(health.contextRatio) || 0) > 0.85 && h3 > 0.8
+        var tint = h1 > 0.90
+          ? accent
+          : warm
+            ? (this.alert || accent)
+            : mix(base, hi, 0.18 + 0.45 * lit)
+        ctx.fillStyle = rgba(tint, a * 0.14)
         ctx.beginPath()
         ctx.arc(px, py, size * 2.7, 0, TAU)
         ctx.fill()
@@ -1824,16 +1835,53 @@ window.__ModuleLoader__.load({
           }
         }
       }
+      // far dust: tiny, faint, slow, adds depth behind the orbit ring
+      for (var fd = 0; fd < 110; fd += 1) {
+        var f1 = (fd * 0.7548776662) % 1
+        var f2 = (fd * 0.5698402910) % 1
+        var fRad = R * (1.42 + 0.55 * f1)
+        var fAng = f2 * TAU + t * (0.02 + 0.05 * f1) * (f2 > 0.5 ? 1 : -1)
+        var fx = cx + Math.cos(fAng) * fRad
+        var fy = cy + Math.sin(fAng) * fRad * (0.35 + 0.3 * f2)
+        var fAlpha = (0.05 + 0.10 * f1) * alpha * (0.7 + 0.5 * Math.sin(t * 0.8 + fd))
+        ctx.fillStyle = rgba(mix(base, hi, 0.3), Math.max(0, fAlpha))
+        ctx.beginPath()
+        ctx.arc(fx, fy, 0.7 + 0.7 * f2, 0, TAU)
+        ctx.fill()
+      }
+
+      // click splash: a short-lived particle puff wherever the sphere was hit
+      var splash = this.focusPulse
+      if (splash) {
+        var age = (Date.now() - splash.at) / 700
+        if (age >= 0 && age <= 1) {
+          for (var sp = 0; sp < 34; sp += 1) {
+            var sh = (sp * 0.6180339887) % 1
+            var sAng = sh * TAU + age * 1.5
+            var sRad = (12 + 90 * age) * (0.6 + 0.8 * sh)
+            var sx2 = splash.x + Math.cos(sAng) * sRad
+            var sy2 = splash.y + Math.sin(sAng) * sRad * 0.8
+            var salpha = (1 - age) * (0.45 - 0.25 * sh) * alpha
+            ctx.fillStyle = rgba(mix(base, hi, 0.7), Math.max(0, salpha))
+            ctx.beginPath()
+            ctx.arc(sx2, sy2, 1.6 + 1.4 * (1 - age), 0, TAU)
+            ctx.fill()
+          }
+        } else if (age > 1) {
+          this.focusPulse = null
+        }
+      }
+
       // particles streaming outward from the rim; memory fill makes them denser
       var streams = 6 + Math.round(memory * 6)
       for (var s = 0; s < streams; s += 1) {
         var phase = (t * (0.18 + 0.05 * s) + s * 0.37) % 1
         var ang2 = s * 0.79 + t * 0.08
         var rad2 = R * (1.0 + 0.34 * phase)
-        var fade = (1 - phase) * (0.55 + 0.3 * lit) * alpha
+        var fade = (1 - phase) * (0.38 + 0.22 * lit) * alpha
         var sx = cx + Math.cos(ang2) * rad2
         var sy = cy + Math.sin(ang2) * rad2 * 0.52
-        ctx.fillStyle = rgba(mix(base, hi, 0.7), fade * 0.25)
+        ctx.fillStyle = rgba(mix(base, hi, 0.7), fade * 0.16)
         ctx.beginPath()
         ctx.arc(sx, sy, 5.5 * (1 - phase) + 1.4, 0, TAU)
         ctx.fill()
