@@ -197,6 +197,36 @@ function byId(report, id) {
   check('missing archive degrades the backup channel', byId(report, 'backup')?.status === 'degraded', byId(report, 'backup'))
   check('backup advice names the action', /jarvis_backup create/u.test(byId(report, 'backup')?.detail || ''), byId(report, 'backup')?.detail)
 }
+// --- 9. backup channel: age boundaries and a corrupt manifest ---
+{
+  const { createBackup, collectSources } = await import('../backup.js')
+  const archiveRoot = join(root, 'age-backups')
+  mkdirSync(archiveRoot, { recursive: true })
+  const collected = collectSources({ memoryRoot: memoryDir, chronicleFile: '', personaFile: '', pluginDir: '' })
+
+  // exactly 14 days old is still ok; 15 days degrades
+  createBackup(archiveRoot, collected, { now: Date.now() - 14 * 86400000, keep: 5 })
+  const boundary = makeCtx()
+  apply(boundary.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: archiveRoot })
+  check('a 14-day-old archive is still ok', byId(state(boundary.routes)?.diagnostics, 'backup')?.status === 'ok', byId(state(boundary.routes)?.diagnostics, 'backup'))
+
+  const olderRoot = join(root, 'older-backups')
+  mkdirSync(olderRoot, { recursive: true })
+  createBackup(olderRoot, collected, { now: Date.now() - 15 * 86400000, keep: 5 })
+  const stale = makeCtx()
+  apply(stale.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: olderRoot })
+  check('a 15-day-old archive degrades', byId(state(stale.routes)?.diagnostics, 'backup')?.status === 'degraded', byId(state(stale.routes)?.diagnostics, 'backup'))
+
+  // a corrupt manifest must never read as green
+  const corruptRoot = join(root, 'corrupt-backups')
+  mkdirSync(join(corruptRoot, 'jarvis-2020-01-01T00-00-00-000'), { recursive: true })
+  writeFileSync(join(corruptRoot, 'jarvis-2020-01-01T00-00-00-000', 'manifest.json'), '{ nope')
+  const corrupt = makeCtx()
+  apply(corrupt.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: corruptRoot })
+  const corruptCheck = byId(state(corrupt.routes)?.diagnostics, 'backup')
+  check('a corrupt manifest degrades the backup channel', corruptCheck?.status === 'degraded', corruptCheck)
+  check('the degradation names the reason', /unreadable/u.test(corruptCheck?.detail || ''), corruptCheck?.detail)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

@@ -110,7 +110,7 @@ node test/keeper-smoke.mjs  # 25/25
 
 ## 自检：`jarvis_doctor`
 
-一个只读诊断工具，也是「坏了能自己说」的地基。它检查七个通道，`DEGRADED` / `FAIL` 的条目会附一句修法：
+一个只读诊断工具，也是「坏了能自己说」的地基。它检查八个通道，`DEGRADED` / `FAIL` 的条目会附一句修法：
 
 | 检查 | 判据 | 典型修法 |
 | --- | --- | --- |
@@ -120,7 +120,8 @@ node test/keeper-smoke.mjs  # 25/25
 | `chronicle` | 目录可写；未创建时报 degraded（诊断本身不建目录，首个回合才建） | 检查 `chronicleDir` 权限，祖先若是文件直接 fail |
 | `services` | agents / tokenMeter / schedule / tools / systemPrompt / webServer 是否在位 | 缺服务说明 profile 组合被改过 |
 | `caches` | 记忆/上下文缓存年龄、schedule 读取是否卡死 | 卡死的读取 10 秒后自动重试 |
-| `tools` | 三个只读工具**实际**注册成功与否（失败会如实报 missing） | tools 服务不可用时全部降级；全缺=fail、缺部分=degraded |
+| `tools` | 四个只读工具**实际**注册成功与否（失败会如实报 missing） | tools 服务不可用时全部降级；全缺=fail、缺部分=degraded |
+| `backup` | 最新归档是否存在、manifest 是否可读、是否超过 14 天 | 没有归档/损坏/过期都报 degraded，并指向 `jarvis_backup create` |
 
 结论只有 `OK / DEGRADED / FAIL / SKIP` 四档；任何服务缺失或抛错都只降级对应通道，不让插件挂掉。
 报告缓存 5 秒（诊断要 stat 文件和探测服务，不能跟着 140ms 轮询跑）。
@@ -130,11 +131,11 @@ HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
 这次就是靠它之外的一次真机加载抓到了 `import { W_OK } from 'node:fs'`（PATH 上的 Node 22 容忍、宿主 Node 24 直接拒绝激活）这类只在宿主上才炸的问题。
 ## 记忆地基：`jarvis_backup`
 
-一条命令把「让 JARVIS 成为 JARVIS」的东西打包：Mnemon 运行库（memories.json / USER.md / MEMORY.md）、文档索引与正文、编年史、`persona.md`、插件配置。
+一条命令把「让 JARVIS 成为 JARVIS」的东西打包：Mnemon 运行库（memories.json / USER.md / MEMORY.md）、文档索引与正文、**记忆空间正文库（data/**/mnemon.db 及其 -wal/-shm）**、归档的运行记录、编年史、`persona.md`、插件配置。
 
 - `action=status`（默认）：归档目录、最新一份的时间与体积、总份数；
 - `action=create`：生成 `~/.dsh/jarvis-sphere/backups/jarvis-<时间戳>/`，内含 `manifest.json`（每个文件的字节数与 sha256），默认只留最近 7 份（`backupKeep`）；
-- `action=verify`：**逐文件重新哈希**，损坏或缺失会点名；通过后打印恢复清单；
+- `action=verify`：**逐文件重新哈希**，损坏或缺失会点名；**畸形 manifest（不是数组、坏条目、非法 JSON）只报原因不抛错**；通过后打印精确到目标文件的恢复清单；
 - **不做自动恢复**：运行中的 Mnemon 持有这些文件，自动回灌会被它覆盖。`verify` 给出的是校验过的复制清单，复制后重启 DSH 生效；
 - 医生（`jarvis_doctor`）多一项 `backup` 检查：没有归档或最新一份超过 14 天 → `DEGRADED`，并直接告诉你跑 `create`。
 
@@ -237,9 +238,9 @@ node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存�
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
-node test/doctor-smoke.mjs  # 25/25  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
+node test/doctor-smoke.mjs  # 29/29  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
-node test/backup-smoke.mjs  # 21/21  归档：源发现、manifest 哈希、篡改/缺失检出、轮换、状态
+node test/backup-smoke.mjs  # 33/33  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

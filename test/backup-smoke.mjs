@@ -32,7 +32,8 @@ writeFileSync(join(pluginDir, 'cordis.patch.yml'), '- insert: []\n')
 const backups = join(root, 'backups')
 
 // --- 1. sources are discovered ---
-const sources = collectSources({ memoryRoot: memoryDir, chronicleFile: chronicle, personaFile: join(pluginDir, 'persona.md'), pluginDir })
+const collected = collectSources({ memoryRoot: memoryDir, chronicleFile: chronicle, personaFile: join(pluginDir, 'persona.md'), pluginDir })
+const sources = collected.sources
 const labels = sources.map((s) => s.label)
 check('collects the runtime store', labels.includes('runtime/memories.json') && labels.includes('runtime/MEMORY.md'), labels)
 check('collects document bodies', labels.includes('documents/active/doc-one.md'), labels.filter((l) => l.startsWith('documents/active')))
@@ -40,7 +41,7 @@ check('collects chronicle, persona and config', labels.includes('chronicle.jsonl
 
 // --- 2. create writes a manifest with hashes ---
 const base = Date.now() - 3600_000
-const created = createBackup(backups, sources, { now: base, keep: 7 })
+const created = createBackup(backups, collected, { now: base, keep: 7 })
 check('create succeeds', created.ok === true, created.ok)
 check('manifest counts every file', created.manifest?.totals?.files === sources.length, created.manifest?.totals)
 check('manifest records bytes and hashes', created.manifest?.files?.every((f) => f.bytes > 0 && /^[a-f0-9]{64}$/u.test(f.sha256)), created.manifest?.files?.[0])
@@ -65,7 +66,7 @@ check('verify detects a missing file', missing.ok === false && missing.broken.so
 
 // --- 5. rotation keeps the newest N ---
 for (let i = 1; i <= 4; i += 1) {
-  createBackup(backups, sources, { now: base + i * 60000, keep: 3 })
+  createBackup(backups, collected, { now: base + i * 60000, keep: 3 })
 }
 const afterRotation = backupStatus(backups)
 check('rotation keeps the newest archives', afterRotation.count === 3, afterRotation.count)
@@ -105,6 +106,72 @@ check('prune respects the keep bound', backupStatus(backups).count === 2, backup
   check('tool never offers restore', !JSON.stringify(tool.parameters).includes('restore'), tool.parameters)
 }
 
+// --- 6. malformed manifests are reported, never thrown ---
+{
+  const badDir = join(root, 'bad-manifests')
+  mkdirSync(badDir, { recursive: true })
+  const archive = join(badDir, 'jarvis-2020-01-01T00-00-00-000')
+  mkdirSync(archive, { recursive: true })
+  writeFileSync(join(archive, 'manifest.json'), JSON.stringify({ version: 1, files: {} }))
+  const notArray = verifyBackup(badDir)
+  check('manifest with files:{} is reported', notArray.ok === false && /no files/u.test(notArray.reason || ''), notArray.reason)
+
+  writeFileSync(join(archive, 'manifest.json'), JSON.stringify({ version: 1, files: [] }))
+  const emptyFiles = verifyBackup(badDir)
+  check('empty files[] is not a false pass', emptyFiles.ok === false && /lists no files/u.test(emptyFiles.reason || ''), emptyFiles.reason)
+
+  writeFileSync(join(archive, 'manifest.json'), JSON.stringify({ version: 1, files: [{ label: 42 }, null, { label: 'ok.md', sha256: 'deadbeef' }] }))
+  const badEntries = verifyBackup(badDir)
+  check('bad entries become broken rows', badEntries.ok === false && badEntries.checked === 3 && badEntries.broken.length >= 2, [badEntries.checked, badEntries.broken.length])
+
+  writeFileSync(join(archive, 'manifest.json'), '{ not json')
+  const brokenJson = verifyBackup(badDir)
+  check('invalid JSON is reported', brokenJson.ok === false && /not valid JSON/u.test(brokenJson.reason || ''), brokenJson.reason)
+
+  const missing = verifyBackup(badDir, 'jarvis-1999-01-01T00-00-00-000')
+  check('missing archive is reported', missing.ok === false && typeof missing.reason === 'string', missing.reason)
+}
+
+// --- 7. backup ids interoperate, same-second archives do not collide ---
+{
+  const idDir = join(root, 'ids')
+  mkdirSync(idDir, { recursive: true })
+  const one = createBackup(idDir, collected, { now: base, keep: 5 })
+  const byFull = verifyBackup(idDir, one.manifest.id)
+  check('verify accepts jarvis-<stamp>', byFull.ok === true, [byFull.ok, byFull.reason])
+  const byStamp = verifyBackup(idDir, one.manifest.id.replace(/^jarvis-/u, ''))
+  check('verify accepts the bare stamp', byStamp.ok === true, [byStamp.ok, byStamp.reason])
+
+  const sameSecond = createBackup(idDir, collected, { now: base, keep: 5 })
+  check('same-millisecond archives get distinct ids', sameSecond.dir !== one.dir, [one.dir, sameSecond.dir])
+  check('both archives are listed', backupStatus(idDir).count === 2, backupStatus(idDir).count)
+}
+
+// --- 8. memory-space databases and archived runtime files are archived ---
+{
+  const dbDir = join(root, 'db')
+  mkdirSync(join(dbDir, 'runtime'), { recursive: true })
+  mkdirSync(join(dbDir, 'documents'), { recursive: true })
+  mkdirSync(join(dbDir, 'data', 'space-a'), { recursive: true })
+  mkdirSync(join(dbDir, 'runtime', 'archived'), { recursive: true })
+  writeFileSync(join(dbDir, 'runtime', 'memories.json'), '{}')
+  writeFileSync(join(dbDir, 'data', 'space-a', 'mnemon.db'), Buffer.from('sqlite-bytes'))
+  writeFileSync(join(dbDir, 'data', 'space-a', 'mnemon.db-wal'), Buffer.from('wal'))
+  writeFileSync(join(dbDir, 'runtime', 'archived', 'old.json'), '{"a":1}')
+  const got = collectSources({ memoryRoot: dbDir, chronicleFile: '', personaFile: '', pluginDir: '' })
+  const labels = got.sources.map((s) => s.label)
+  check('memory-space databases are archived', labels.includes('data/space-a/mnemon.db') && labels.includes('data/space-a/mnemon.db-wal'), labels.filter((l) => l.startsWith('data/')))
+  check('archived runtime files are archived', labels.includes('runtime/archived/old.json'), labels.filter((l) => l.startsWith('runtime/archived')))
+}
+
+// --- 9. the doctor treats a corrupt archive as degraded, not green ---
+{
+  const corrupt = join(root, 'corrupt')
+  mkdirSync(join(corrupt, 'jarvis-2020-01-01T00-00-00-000'), { recursive: true })
+  writeFileSync(join(corrupt, 'jarvis-2020-01-01T00-00-00-000', 'manifest.json'), '{ broken')
+  const status = backupStatus(corrupt)
+  check('status flags an unreadable manifest', status.ok === false && typeof status.reason === 'string', status.ok)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

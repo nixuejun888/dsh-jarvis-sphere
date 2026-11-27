@@ -749,8 +749,12 @@ function parseChronicleLine(line) {
       const status = backupReport()
       if (!status.latest) {
         add('backup', 'degraded', 'no archive yet under ' + backupDir + '; run jarvis_backup create')
+      } else if (!status.ok) {
+        add('backup', 'degraded', status.latest + ' is unreadable: ' + String(status.reason || 'unknown') + '; run jarvis_backup verify or create')
       } else if (status.ageDays > 14) {
         add('backup', 'degraded', 'newest archive is ' + status.ageDays + ' days old (' + status.latest + ')')
+      } else if (status.ageDays < 0) {
+        add('backup', 'degraded', status.latest + ' has an invalid createdAt; run jarvis_backup verify')
       } else {
         add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
       }
@@ -1415,6 +1419,7 @@ function parseChronicleLine(line) {
         if (!value.ok) return '备份失败：' + String(value.reason || 'unknown')
         lines.push('已归档 ' + value.manifest.totals.files + ' 个文件 / ' + Math.round(value.manifest.totals.bytes / 1024) + ' KB → ' + value.dir)
         if (value.manifest.totals.failed) lines.push('  有 ' + value.manifest.totals.failed + ' 个文件复制失败，见 manifest')
+        if (value.manifest.truncated && value.manifest.truncated.length) lines.push('  已达上限未全收：' + value.manifest.truncated.join('; '))
         if (value.pruned && value.pruned.length) lines.push('  轮换删除：' + value.pruned.join(', '))
         return lines.join('\n')
       }
