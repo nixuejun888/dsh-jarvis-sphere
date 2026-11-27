@@ -1606,6 +1606,11 @@ window.__ModuleLoader__.load({
           var slotX = px[fly.idx]
           var slotY = py[fly.idx]
           if (!isFinite(slotX) || !isFinite(slotY)) continue
+          var flyAng = Math.atan2(slotY - cy, slotX - cx) + 2.1
+          var startX = cx + Math.cos(flyAng) * R * 0.95
+          var startY = cy + Math.sin(flyAng) * R * 0.95
+          var ctrlX2 = (startX + slotX) / 2 + ((startX + slotX) / 2 - cx) * 0.30
+          var ctrlY2 = (startY + slotY) / 2 + ((startY + slotY) / 2 - cy) * 0.30
           var flyTint = fly.t === 'user'
             ? (pal.amber || accent)
             : fly.t === 'space'
@@ -1613,8 +1618,9 @@ window.__ModuleLoader__.load({
               : mix(pal.cyan || base, hi, 0.6)
           for (var tr = 0; tr < 4; tr += 1) {
             var tp = Math.max(0, ease - tr * 0.055)
-            var ax = cx + (slotX - cx) * tp
-            var ay = cy + (slotY - cy) * tp
+            var inv2 = 1 - tp
+            var ax = inv2 * inv2 * startX + 2 * inv2 * tp * ctrlX2 + tp * tp * slotX
+            var ay = inv2 * inv2 * startY + 2 * inv2 * tp * ctrlY2 + tp * tp * slotY
             var ta = (1 - flyP) * 0.95 * alphaScale * (1 - tr * 0.16)
             ctx.fillStyle = rgba(flyTint, Math.max(0, ta))
             ctx.beginPath()
@@ -1738,10 +1744,10 @@ window.__ModuleLoader__.load({
         var cmEase = cmP * cmP * (3 - 2 * cmP)
         var landX = cx
         var landY = cy
-        var startX = cx + Math.cos(cm2.ang + 1.25) * R * 2.45
-        var startY = cy + Math.sin(cm2.ang + 1.25) * R * 2.45
-        var ctrlX = cx + Math.cos(cm2.ang + 0.95) * R * 1.6
-        var ctrlY = cy + Math.sin(cm2.ang + 0.95) * R * 1.6
+        var startX = cx + Math.cos(cm2.ang + 1.25) * R * 1.12
+        var startY = cy + Math.sin(cm2.ang + 1.25) * R * 1.12
+        var ctrlX = cx + Math.cos(cm2.ang + 1.05) * R * 0.72
+        var ctrlY = cy + Math.sin(cm2.ang + 1.05) * R * 0.72
         var quadAt = function (k) {
           var inv = 1 - k
           return {
