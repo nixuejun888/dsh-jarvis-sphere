@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
       'html.jvs-stage [data-jvs-side]{opacity:0.62;transition:opacity 200ms ease;}',
       'html.jvs-stage [data-jvs-side]:hover{opacity:1;}',
-      'html.jvs-ball,html.jvs-ball body{background:rgb(1,2,3) !important;}',
+      'html.jvs-ball,html.jvs-ball body{background:transparent !important;}',
       'html.jvs-ball body *{visibility:hidden !important;}',
       'html.jvs-ball canvas,html.jvs-ball canvas *{visibility:visible !important;}',
       'html.jvs-ball [data-jvs-chat],html.jvs-ball [data-jvs-chat] *{visibility:visible !important;}',
@@ -58,6 +58,9 @@ window.__ModuleLoader__.load({
       '.jvs-drawer-btn.jvs-right{right:0;border-radius:8px 0 0 8px;}',
       '.jvs-dock-btn{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:80;padding:5px 14px;border-radius:999px;border:1px solid rgba(120,200,255,0.3);background:rgba(6,10,18,0.9);color:#8fd3ff;font:12px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;letter-spacing:0.08em;}',
       'html.jvs-full .jvs-dock-btn{display:block;}',
+      '.jvs-win{position:fixed;top:6px;right:10px;z-index:2147483002;display:flex;gap:6px;pointer-events:auto;}',
+      '.jvs-win button{width:26px;height:22px;border-radius:6px;border:1px solid rgba(120,200,255,0.28);background:rgba(6,10,18,0.85);color:#8fd3ff;font:12px ui-monospace,monospace;cursor:pointer;line-height:1;}',
+      '.jvs-win button:hover{border-color:rgba(140,220,255,0.7);}',
       '.jvs-mode-pill{position:fixed;top:58px;right:16px;z-index:2147483000;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.28);background:rgba(6,10,18,0.88);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
@@ -315,6 +318,7 @@ window.__ModuleLoader__.load({
       this.onResize()
       this.bindKeys()
       this.ensureModePill()
+      this.ensureWinControls()
       this.bindPanel()
       this.rebuild(this.cfg.nodeCount)
       this.detectTheme()
@@ -656,7 +660,55 @@ window.__ModuleLoader__.load({
 
 
 
-    /** Ball mode: the desktop window itself is clipped to a circle. */
+
+    /** Minimise/close buttons and a drag strip: the window has no title bar. */
+    SphereEngine.prototype.ensureWinControls = function () {
+      var self = this
+      if (!document.querySelector('.jvs-win')) {
+        var box = document.createElement('div')
+        box.className = 'jvs-win'
+        var min = document.createElement('button')
+        min.type = 'button'
+        min.textContent = '—'
+        min.setAttribute('aria-label', '最小化')
+        min.onclick = function (event) {
+          event.stopPropagation()
+          self.postShape('min')
+        }
+        var close = document.createElement('button')
+        close.type = 'button'
+        close.textContent = '×'
+        close.setAttribute('aria-label', '关闭')
+        close.onclick = function (event) {
+          event.stopPropagation()
+          self.postShape('close')
+        }
+        box.appendChild(min)
+        box.appendChild(close)
+        document.body.appendChild(box)
+      }
+      if (!document.querySelector('.jvs-drag')) {
+        var drag = document.createElement('div')
+        drag.className = 'jvs-drag'
+        drag.setAttribute('aria-hidden', 'true')
+        document.body.appendChild(drag)
+      }
+    }
+
+    SphereEngine.prototype.postShape = function (mode) {
+      try {
+        fetch('/dsh-jarvis/shape', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: mode }),
+          credentials: 'same-origin',
+        }).catch(function () {})
+      } catch (err) {
+        void err
+      }
+    }
+
+    /** Ball mode: the desktop window is transparent, only the sphere is painted. */
     SphereEngine.prototype.setBall = function (on) {
       var self = this
       this.ball = !!on
@@ -671,12 +723,7 @@ window.__ModuleLoader__.load({
           this.setFull(true)
           var chatOpen = document.querySelector('[data-jvs-chat]')
           if (chatOpen) chatOpen.setAttribute('data-jvs-open', '1')
-          if (!document.querySelector('.jvs-drag')) {
-            var drag = document.createElement('div')
-            drag.className = 'jvs-drag'
-            drag.setAttribute('aria-hidden', 'true')
-            document.body.appendChild(drag)
-          }
+          this.ensureWinControls()
         } catch (layoutErr) {
           this.reportLayout('ball layout failed: ' + String(layoutErr && layoutErr.message), 'error', [])
         }
@@ -876,7 +923,7 @@ window.__ModuleLoader__.load({
       if (this.ball) {
         /* the window region is a full-width circle followed by the dock strip */
         var side = Math.min(w, BALL_SPHERE)
-        return { cx: side / 2, cy: side / 2, R: side / 2 - 2 }
+        return { cx: side / 2, cy: side / 2, R: side / 2 - 6 }
       }
       var radius = Math.min(w, hgt) * 0.40
       var cy = Math.min(hgt - radius - 12, Math.max(radius + 12, hgt * 0.40))
@@ -1419,6 +1466,21 @@ window.__ModuleLoader__.load({
       ctx.globalCompositeOperation = 'source-over'
       ctx.globalAlpha = 1
       ctx.clearRect(0, 0, w, hgt)
+
+      /* ball mode: paint a soft dark orb so the sphere reads on the desktop,
+         everything outside the circle stays transparent */
+      if (this.ball) {
+        var ballSide = Math.min(w, hgt)
+        var ballR = ballSide / 2 - 6
+        var orb = ctx.createRadialGradient(ballSide / 2, ballSide / 2, ballR * 0.2, ballSide / 2, ballSide / 2, ballR)
+        orb.addColorStop(0, 'rgba(4,7,12,0.92)')
+        orb.addColorStop(0.72, 'rgba(4,7,12,0.80)')
+        orb.addColorStop(1, 'rgba(4,7,12,0)')
+        ctx.fillStyle = orb
+        ctx.beginPath()
+        ctx.arc(ballSide / 2, ballSide / 2, ballR, 0, Math.PI * 2)
+        ctx.fill()
+      }
 
       var cfg = this.cfg
       if (!cfg.enabled) return
