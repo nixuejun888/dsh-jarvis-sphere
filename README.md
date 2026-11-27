@@ -160,6 +160,18 @@ HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
 - `alerts: false` 一并关掉上下文和工具。
 
 HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
+## 执行通道：`jarvis_memory_apply`
+
+`jarvis_memory_review` 只出建议；这个工具把「确认」变成动作，但三条规矩不变：
+
+- **默认预演**：不加 `confirm: true` 只返回计划（条目数/字节数变化、要删哪些、要加什么），不碰文件；
+- **只碰 Markdown 投影**（`MEMORY.md` / `USER.md`），**绝不直接改 Mnemon 的 SQLite 正文库**——那边由 Mnemon 自己维护一致性；
+- **写前必留证据**：先整库归档（复用 `jarvis_backup`），被删的原文另存 `runtime/archived/manual/<文件>.<时间戳>.md`，文件用临时文件 + rename 原子替换，写后重新解析核对条目数，并把 `{时间, 动作, 条目, 快照, 归档}` 追加进 `~/.dsh/jarvis-sphere/memory-audit.jsonl`。
+
+动作：`archive`（移出并归档）、`delete`（删除，原文同样归档）、`rewrite`（原地改写一条）、`merge`（多条合成一条，需 ≥2 条）。
+选择器：`entries: [1-based 序号]`（序号来自 `jarvis_memory_review` 的列表）＋可选 `expected: ["预览片段"]`——**文件自复查以来变过就拒绝写入**，避免序号漂移改错记忆。
+
+实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -237,6 +249,7 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         # backupDir: 'C:\绝对路径\'   # 归档目录；空 = ~/.dsh/jarvis-sphere/backups
         backupKeep: 7      # 保留几份
         alerts: true       # 主动提醒（运行时提示注入 + jarvis_alerts）
+        memoryWrite: true  # jarvis_memory_apply（默认预演，写前自动归档）
         # chronicleDir: 'C:\绝对路径\'   # 编年史目录；空 = ~/.dsh/jarvis-sphere
 ```
 
@@ -261,6 +274,8 @@ node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 node test/doctor-smoke.mjs  # 31/31  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
+node test/writer-smoke.mjs  # 28/28  执行通道：解析/选择器防漂移、archive/rewrite/merge、预演不写、确认后归档+快照+审计
+
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
 node test/alert-smoke.mjs  # 40/40  提醒：六类阈值、优先级截断与「另有 N 条」、ack 释放与复活、字符串/非数组 id、提示注入、关闭
 ```

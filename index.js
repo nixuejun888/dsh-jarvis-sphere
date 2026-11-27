@@ -15,6 +15,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { registerKeeper } from './keeper.js'
 import { backupStatus, collectSources, createBackup, restorePlan, verifyBackup } from './backup.js'
+import { applyPlan, appendAudit, parseEntries, planOperation, readProjection } from './memory-writer.js'
 
 /** Tunables the row's `config` may override. */
 const DEFAULTS = {
@@ -49,6 +50,8 @@ const DEFAULTS = {
   backupKeep: 7,
   /** Proactive alerts as runtime prompt context. */
   alerts: true,
+  /** jarvis_memory_apply: writes to MEMORY.md/USER.md with a snapshot. */
+  memoryWrite: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -558,7 +561,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -747,6 +750,7 @@ function parseChronicleLine(line) {
       { name: 'doctor', ok: registered.doctor, disabled: false },
       { name: 'backup', ok: registered.backup, disabled: cfg.backup === false },
       { name: 'alerts', ok: registered.alertTool && (registered.alerts || cfg.alerts === false), disabled: cfg.alerts === false },
+      { name: 'memoryWrite', ok: registered.memoryWriter, disabled: cfg.memoryWrite === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
@@ -1441,6 +1445,126 @@ function parseChronicleLine(line) {
     return Object.assign({}, memoryHealth(), contextHealth(), scheduleHealth(), { recentErrors: recentErrors() })
   }
 
+  /**
+   * Execute one reviewed memory decision. A dry run is the default; a real
+   * write always archives the whole store first, only touches the Markdown
+   * projection, and records itself in an audit log.
+   */
+  const attachMemoryWriter = () => {
+    if (cfg.memoryWrite === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const render = (value) => {
+      const lines = []
+      if (!value.ok) return '未执行：' + String(value.reason || 'unknown')
+      const head = value.applied ? '已写入' : '预演（未写入）'
+      lines.push(head + ' · ' + value.action + ' · ' + value.file)
+      lines.push('  条目 ' + value.beforeEntries + ' → ' + value.afterEntries + ' · ' + value.beforeBytes + ' B → ' + value.afterBytes + ' B')
+      for (const entry of value.removed) lines.push('  - #' + entry.index + ' ' + entry.preview + '（' + entry.bytes + ' B）')
+      if (value.added) lines.push('  + ' + value.added.preview + '（' + value.added.bytes + ' B）')
+      if (value.archiveFile) lines.push('  原文归档：' + value.archiveFile)
+      if (value.snapshot) lines.push('  写入前快照：' + value.snapshot)
+      if (!value.applied) lines.push('  确认后执行：同一调用加 confirm: true')
+      return lines.join('\n')
+    }
+    const definition = {
+      name: 'jarvis_memory_apply',
+      description:
+        'Execute one reviewed memory decision on the Markdown projection (MEMORY.md or USER.md): archive, delete, rewrite '
+        + 'or merge entries selected by 1-based index, optionally verified against expected text. Dry run by default; '
+        + 'confirm: true performs the write after archiving the whole memory store, then records an audit line. It never '
+        + 'touches the SQLite bodies that Mnemon owns.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['archive', 'delete', 'rewrite', 'merge'] },
+          target: { type: 'string', enum: ['memory', 'user'], description: 'Default memory.' },
+          entries: { type: 'array', items: { type: 'integer', minimum: 1 }, description: '1-based entry indexes as listed by jarvis_memory_review.' },
+          expected: { type: 'array', items: { type: 'string' }, description: 'Optional preview substring per selected entry; a mismatch refuses the write.' },
+          text: { type: 'string', description: 'Replacement entry for rewrite / merge.' },
+          confirm: { type: 'boolean', description: 'true performs the write; default is a dry run.' },
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 60000,
+      execute: async (args) => {
+        const request = args || {}
+        const root = resolveMemoryRoot()
+        if (!root) return { ok: false, reason: 'no memory root found' }
+        const target = String(request.target || 'memory') === 'user' ? 'USER.md' : 'MEMORY.md'
+        const relative = 'runtime/' + target
+        const current = readProjection(root, relative)
+        if (current === null) return { ok: false, reason: 'cannot read ' + relative }
+        const plan = planOperation(current, request)
+        if (!plan.ok) return { ok: false, reason: plan.reason }
+        const base = {
+          action: plan.action,
+          file: relative,
+          beforeEntries: plan.beforeEntries,
+          afterEntries: plan.afterEntries,
+          beforeBytes: plan.beforeBytes,
+          afterBytes: plan.afterBytes,
+          removed: plan.removed,
+          added: plan.added,
+        }
+        if (request.confirm !== true) return { ok: true, applied: false, ...base }
+
+        const backup = createBackup(backupDir, backupSources(), { keep: Number(cfg.backupKeep) || 7 })
+        if (!backup.ok) return { ok: false, reason: 'refusing to write without a snapshot: ' + String(backup.reason || 'unknown') }
+        const written = applyPlan(root, relative, plan)
+        if (!written.ok) return { ok: false, reason: written.reason }
+        const after = readProjection(root, relative)
+        const applied = after !== null ? parseEntries(after).length : -1
+        const audit = {
+          t: new Date().toISOString(),
+          action: plan.action,
+          file: relative,
+          entries: plan.removed.map((entry) => entry.index),
+          beforeEntries: plan.beforeEntries,
+          afterEntries: applied,
+          snapshot: backup.dir,
+          archive: written.archiveFile,
+        }
+        appendAudit(join(chronicleDir, 'memory-audit.jsonl'), audit)
+        return { ok: true, applied: true, ...base, afterEntries: applied, archiveFile: written.archiveFile, snapshot: backup.dir }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.memoryWriter = true
+      return () => {
+        registered.memoryWriter = false
+        try {
+          release()
+        } catch (err) {
+          warn('memory writer release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_memory_apply: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachMemoryWriter, 'jarvis-sphere: memory writer')
+    else {
+      const dispose = attachMemoryWriter()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the memory writer: ' + String(err && err.message))
+  }
   /** Alerts the operator can read and acknowledge from a tool call. */
   const attachAlertTool = () => {
     if (cfg.alerts === false) return () => {}

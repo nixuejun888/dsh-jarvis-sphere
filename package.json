@@ -31,6 +31,7 @@
     "cordis.patch.yml",
     "keeper.js",
     "backup.js",
+    "memory-writer.js",
     "persona.md",
     "locale",
     "docs",

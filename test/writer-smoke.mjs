@@ -1,0 +1,148 @@
+// Harness for the execution half: dry run by default, archive + snapshot before
+// a write, atomic replacement, and a selector that cannot silently drift.
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { apply } from '../index.js'
+import { parseEntries, renderEntries, planOperation, selectEntries } from '../memory-writer.js'
+
+const results = []
+function check(label, ok, extra) {
+  results.push({ label, ok, extra })
+}
+
+const root = mkdtempSync(join(tmpdir(), 'jarvis-writer-'))
+const memoryDir = join(root, 'memory')
+mkdirSync(join(memoryDir, 'runtime'), { recursive: true })
+const memoryFile = join(memoryDir, 'runtime', 'MEMORY.md')
+const userFile = join(memoryDir, 'runtime', 'USER.md')
+writeFileSync(memoryFile, '第一条：规则 A\n§\n第二条：规则 B\n§\n第三条：规则 C\n')
+writeFileSync(userFile, '用户偏好：一句话\n')
+writeFileSync(join(memoryDir, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [] }))
+
+function makeCtx() {
+  const routes = new Map()
+  const registered = []
+  const ctx = {
+    on() {
+      return () => {}
+    },
+    effect(execute) {
+      const dispose = execute()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+    get(name) {
+      if (name === 'config') return { resolveConfigByPackage: () => ({ dataDir: memoryDir }) }
+      if (name === 'systemPrompt') return { section: () => () => {}, context: () => () => {} }
+      if (name === 'tools') {
+        return {
+          register(definition) {
+            registered.push(definition)
+            return () => {
+              const at = registered.indexOf(definition)
+              if (at >= 0) registered.splice(at, 1)
+            }
+          },
+        }
+      }
+      if (name === 'agents') return { list: () => [] }
+      if (name === 'tokenMeter') return { contextPressure: () => ({}) }
+      if (name === 'schedule') return { list: async () => ({ items: [], total: 0 }) }
+      if (name === 'webServer') return {}
+      return undefined
+    },
+    webServer: { register(route) { routes.set(route.path, route); return () => {} } },
+    agents: { list: () => [] },
+    logger: { warn() {} },
+  }
+  return { ctx, routes, registered }
+}
+
+// --- 1. parsing and rendering round-trip ---
+{
+  const text = readFileSync(memoryFile, 'utf8')
+  const entries = parseEntries(text)
+  check('parse splits the separator', entries.length === 3, entries.length)
+  check('parse trims bodies', entries[0] === '第一条：规则 A', entries[0])
+  check('render restores the format', renderEntries(entries) === text, JSON.stringify(renderEntries(entries)))
+}
+
+// --- 2. the selector refuses drift ---
+{
+  const entries = parseEntries(readFileSync(memoryFile, 'utf8'))
+  check('selector accepts a matching preview', selectEntries(entries, { entries: [2], expected: ['规则 B'] }).ok === true, selectEntries(entries, { entries: [2], expected: ['规则 B'] }))
+  const drift = selectEntries(entries, { entries: [2], expected: ['规则 X'] })
+  check('selector refuses a drifted preview', drift.ok === false && /expected text/u.test(drift.reason), drift)
+  const range = selectEntries(entries, { entries: [9] })
+  check('selector refuses an out-of-range index', range.ok === false && /out of range/u.test(range.reason), range)
+  const dup = selectEntries(entries, { entries: [1, 1] })
+  check('selector refuses duplicates', dup.ok === false && /repeats/u.test(dup.reason), dup)
+}
+
+// --- 3. plans: archive / rewrite / merge / delete ---
+{
+  const text = readFileSync(memoryFile, 'utf8')
+  const archive = planOperation(text, { action: 'archive', entries: [2] })
+  check('archive plan drops the entry', archive.ok && parseEntries(archive.text).length === 2, archive.ok && parseEntries(archive.text).length)
+  check('archive plan keeps the original body', archive.replaced.length === 1 && archive.replaced[0].includes('规则 B'), archive.replaced)
+  const rewrite = planOperation(text, { action: 'rewrite', entries: [1], text: '第一条：规则 A（收紧）' })
+  check('rewrite replaces in place', rewrite.ok && parseEntries(rewrite.text)[0] === '第一条：规则 A（收紧）', rewrite.ok && parseEntries(rewrite.text)[0])
+  const merge = planOperation(text, { action: 'merge', entries: [1, 2], text: '合并：A 与 B' })
+  check('merge replaces two with one', merge.ok && parseEntries(merge.text).length === 2 && parseEntries(merge.text)[0] === '合并：A 与 B', merge.ok && parseEntries(merge.text).length)
+  const one = planOperation(text, { action: 'merge', entries: [1], text: 'x' })
+  check('merge refuses a single entry', one.ok === false, one.reason)
+  const noText = planOperation(text, { action: 'rewrite', entries: [1] })
+  check('rewrite refuses without text', noText.ok === false, noText.reason)
+  const multi = planOperation(text, { action: 'rewrite', entries: [1], text: 'a\n§\nb' })
+  check('rewrite refuses a multi-entry body', multi.ok === false, multi.reason)
+}
+
+// --- 4. the tool: dry run writes nothing, confirm writes and archives ---
+{
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'chronicle'), backupDir: join(root, 'backups'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_memory_apply')
+  check('the writer tool is registered', !!tool, registered.map((d) => d.name))
+
+  const before = readFileSync(memoryFile, 'utf8')
+  const dry = await tool.execute({ action: 'archive', entries: [2], expected: ['规则 B'] }, {})
+  check('a dry run reports a plan', dry.ok === true && dry.applied === false, dry)
+  check('a dry run writes nothing', readFileSync(memoryFile, 'utf8') === before, readFileSync(memoryFile, 'utf8') === before)
+
+  const drift = await tool.execute({ action: 'archive', entries: [2], expected: ['规则 X'], confirm: true }, {})
+  check('a drifted selector refuses the write', drift.ok === false && /expected text/u.test(drift.reason), drift)
+  check('a refused write leaves the file alone', readFileSync(memoryFile, 'utf8') === before, readFileSync(memoryFile, 'utf8') === before)
+
+  const applied = await tool.execute({ action: 'archive', entries: [2], expected: ['规则 B'], confirm: true }, {})
+  check('a confirmed write applies', applied.ok === true && applied.applied === true && applied.afterEntries === 2, applied)
+  const after = readFileSync(memoryFile, 'utf8')
+  check('the archived entry left the file', !after.includes('规则 B') && after.includes('规则 A') && after.includes('规则 C'), after)
+  const archives = readdirSync(join(memoryDir, 'runtime', 'archived', 'manual'))
+  check('the archive file holds the original text', archives.length === 1 && readFileSync(join(memoryDir, 'runtime', 'archived', 'manual', archives[0]), 'utf8').includes('规则 B'), archives)
+  const auditLines = readFileSync(join(root, 'chronicle', 'memory-audit.jsonl'), 'utf8').trim().split('\n')
+  check('an audit line records the write', auditLines.length === 1 && JSON.parse(auditLines[0]).action === 'archive', auditLines)
+  const snapshot = JSON.parse(auditLines[0]).snapshot
+  check('a snapshot was taken before the write', typeof snapshot === 'string' && existsSync(snapshot), snapshot)
+}
+
+// --- 5. user projection is a separate target ---
+{
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'chronicle-2'), backupDir: join(root, 'backups-2'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_memory_apply')
+  const before = readFileSync(userFile, 'utf8')
+  const dry = await tool.execute({ action: 'rewrite', target: 'user', entries: [1], text: '用户偏好：更短' }, {})
+  check('the user target is a dry run by default', dry.ok === true && dry.file === 'runtime/USER.md', dry)
+  check('the user dry run writes nothing', readFileSync(userFile, 'utf8') === before, readFileSync(userFile, 'utf8') === before)
+  const applied = await tool.execute({ action: 'rewrite', target: 'user', entries: [1], text: '用户偏好：更短', confirm: true }, {})
+  check('the user rewrite applies', applied.ok === true && readFileSync(userFile, 'utf8').includes('更短'), readFileSync(userFile, 'utf8'))
+  const untouched = readFileSync(memoryFile, 'utf8')
+  check('the memory projection is untouched by a user write', untouched.includes('规则 A'), untouched.length)
+}
+
+rmSync(root, { recursive: true, force: true })
+
+const failed = results.filter((r) => !r.ok)
+for (const r of results) console.log((r.ok ? 'PASS ' : 'FAIL ') + r.label + (r.extra === undefined ? '' : '  [' + JSON.stringify(r.extra) + ']'))
+console.log('\n' + (results.length - failed.length) + '/' + results.length + ' checks passed')
+process.exit(failed.length === 0 ? 0 : 1)
