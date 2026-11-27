@@ -88,6 +88,27 @@ Host 半边的单元断言（工具计数、收尾、轮次、405、卸载清路
 node test/host-smoke.mjs
 ```
 
+## 路由生命周期（0.2.3-alpha.2 兼容修复）
+
+1.0.0 把 `/dsh-jarvis/state` 直接 `ctx.webServer.register(...)` 注册，只把返回的 disposer 塞进
+`apply` 内的 `disposers`，而**加载器会忽略 `apply` 的返回值**。该版本上实测后果：
+
+- 关掉插件那一行，路由仍留在进程里继续应答（数据冻结在关闭那一刻）。
+- 再打开时 `apply` 撞上 `webserver: duplicate exact route "/dsh-jarvis/state"`，整行激活失败。
+
+现在的做法：
+
+1. 路由注册放进 `ctx.effect(...)`，与插件生命周期绑定：停用即释放，重新启用可重注册。
+2. 快照 `build` 升到 `3`；若本进程里仍被旧实例占着主路径（旧版泄漏、无法回收），新实例改注册
+   `/dsh-jarvis/state-v2`，Client 半边只认 `build >= 3`，主路径返回旧快照时自动改投备用路径。
+   重启一次 DSH 后进程干净，会重新回到主路径，备用路径不再使用。
+3. `test/reload-smoke.mjs` 覆盖上述生命周期（停用释放、重启用、旧路由占位、备用路径接管）。
+
+```bash
+node test/host-smoke.mjs    # 22/22
+node test/reload-smoke.mjs  # 15/15
+```
+
 ## 已知限制
 
 - 数据是 140–450ms 粒度的轮询快照，不是逐 token 推送；视觉上够用，但不是严格实时。

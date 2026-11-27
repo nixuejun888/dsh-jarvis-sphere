@@ -13,6 +13,10 @@ window.__ModuleLoader__.load({
     var h = React.createElement
 
     var STATE_PATH = '/dsh-jarvis/state'
+    /* 老版本实例可能占着主路径不放（Host 路由没随插件卸载释放），
+       所以只认 build 够新的快照，主路径不达标时改投这个备用路径。 */
+    var STATE_PATHS = ['/dsh-jarvis/state', '/dsh-jarvis/state-v2']
+    var MIN_BUILD = 3
     var TAU = Math.PI * 2
 
     var CSS = [
@@ -335,19 +339,47 @@ window.__ModuleLoader__.load({
       return list
     }
 
+    /** 上次成功的路径优先，其余按主路径、备用路径排。 */
+    SphereEngine.prototype.pathCandidates = function () {
+      var preferred = this.statePath
+      var out = []
+      if (preferred) out.push(preferred)
+      for (var i = 0; i < STATE_PATHS.length; i++) {
+        if (STATE_PATHS[i] !== preferred) out.push(STATE_PATHS[i])
+      }
+      return out
+    }
+
+    SphereEngine.prototype.candidates = function () {
+      var bases = this.baseCandidates()
+      var paths = this.pathCandidates()
+      var out = []
+      for (var b = 0; b < bases.length; b++) {
+        for (var p = 0; p < paths.length; p++) out.push({ base: bases[b], path: paths[p] })
+      }
+      return out
+    }
+
+    /** 只接受本版本 Host 的快照，跳过老实例留下的冻结数据。 */
+    function acceptState(data) {
+      if (!data || typeof data !== 'object') return false
+      var build = Number(data.build)
+      return isFinite(build) && build >= MIN_BUILD
+    }
+
     SphereEngine.prototype.pollLoop = function () {
       if (this.destroyed) return
       var self = this
-      var bases = this.baseCandidates()
+      var candidates = this.candidates()
       var index = 0
       var attempt = function () {
-        if (index >= bases.length) {
+        if (index >= candidates.length) {
           self.failures = (self.failures || 0) + 1
           return Promise.resolve()
         }
-        var base = bases[index++]
-        return fetch(base + STATE_PATH, {
-          credentials: base ? 'include' : 'same-origin',
+        var candidate = candidates[index++]
+        return fetch(candidate.base + candidate.path, {
+          credentials: candidate.base ? 'include' : 'same-origin',
           cache: 'no-store',
           headers: { accept: 'application/json' },
         })
@@ -356,7 +388,9 @@ window.__ModuleLoader__.load({
             return res.json()
           })
           .then(function (data) {
-            self.stateBase = base
+            if (!acceptState(data)) throw new Error('snapshot build ' + String(data && data.build))
+            self.stateBase = candidate.base
+            self.statePath = candidate.path
             self.failures = 0
             self.applyState(data)
           })

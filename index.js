@@ -25,6 +25,17 @@ const WINDOW_MS = 2500
 /** Last N interesting log events kept for the HUD ticker. */
 const RECENT_MAX = 8
 
+/** The single owner-only state route this plugin publishes. */
+const ROUTE_PATH = '/dsh-jarvis/state'
+/**
+ * Fallback route used when an older instance in this same process still owns
+ * ROUTE_PATH: its registration cannot be released, so a fresh instance answers
+ * here instead of failing to activate. The Client half accepts only BUILD.
+ */
+const ROUTE_PATH_ALTERNATE = '/dsh-jarvis/state-v2'
+/** Snapshot shape marker; the Client half ignores older builds. */
+const BUILD = 3
+
 function num(value, fallback) {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
@@ -183,7 +194,7 @@ export function apply(ctx, config) {
     const activeRecently = lastActivityAt > 0 && now - lastActivityAt < 3000
     return {
       v: 1,
-      build: 2,
+      build: BUILD,
       ts: now,
       running: running > 0 || activeRecently,
       agents: running,
@@ -201,11 +212,20 @@ export function apply(ctx, config) {
 
   const disposers = []
 
+  /** Best-effort plugin log line: a missing logger must never break apply. */
+  function warn(message) {
+    try {
+      if (ctx.logger && typeof ctx.logger.warn === 'function') ctx.logger.warn('jarvis-sphere: ' + message)
+    } catch (err) {
+      void err
+    }
+  }
+
   function on(name, listener) {
     try {
       disposers.push(ctx.on(name, listener))
     } catch (err) {
-      ctx.logger ? ctx.logger.warn('jarvis-sphere: cannot listen to ' + name + ': ' + String(err && err.message)) : void 0
+      warn('cannot listen to ' + name + ': ' + String(err && err.message))
     }
   }
 
@@ -252,32 +272,74 @@ export function apply(ctx, config) {
     void err
   }
 
-  disposers.push(
-    ctx.webServer.register({
-      kind: 'exact',
-      path: '/dsh-jarvis/state',
-      handler: (req, res) => {
+  /** Answer one request from this instance's current snapshot. */
+  const serve = (req, res) => {
+    try {
+      if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
+        res.statusCode = 405
+        res.setHeader('allow', 'GET, HEAD')
+        res.end()
+        return
+      }
+      const body = JSON.stringify(snapshot())
+      res.statusCode = 200
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.setHeader('cache-control', 'no-store')
+      res.setHeader('content-length', Buffer.byteLength(body))
+      res.end(req.method === 'HEAD' ? undefined : body)
+    } catch (err) {
+      res.statusCode = 500
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ ok: false, error: String((err && err.message) || err) }))
+    }
+  }
+
+  /**
+   * Publish the state route for as long as this instance lives.
+   *
+   * The loader ignores a disposer returned from `apply`, so a route registered
+   * outside `ctx.effect` outlives the plugin: disabling it would keep
+   * answering, and the next enable would fail with "duplicate exact route".
+   * Registering inside the effect ties the route to the plugin lifecycle.
+   *
+   * A process that still holds such a leaked ROUTE_PATH (an older build) cannot
+   * release it, so this instance claims ROUTE_PATH_ALTERNATE and the Client half
+   * polls it after the primary snapshot fails the BUILD check.
+   */
+  const attachRoute = () => {
+    let release = null
+    let served = ''
+    for (const path of [ROUTE_PATH, ROUTE_PATH_ALTERNATE]) {
+      try {
+        release = ctx.webServer.register({ kind: 'exact', path, handler: serve })
+        served = path
+        break
+      } catch (err) {
+        warn('cannot own ' + path + ': ' + String(err && err.message))
+      }
+    }
+    if (served && served !== ROUTE_PATH) {
+      warn(ROUTE_PATH + ' is still owned by an older instance in this process; serving ' + served)
+    }
+    return () => {
+      if (typeof release === 'function') {
         try {
-          if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
-            res.statusCode = 405
-            res.setHeader('allow', 'GET, HEAD')
-            res.end()
-            return
-          }
-          const body = JSON.stringify(snapshot())
-          res.statusCode = 200
-          res.setHeader('content-type', 'application/json; charset=utf-8')
-          res.setHeader('cache-control', 'no-store')
-          res.setHeader('content-length', Buffer.byteLength(body))
-          res.end(req.method === 'HEAD' ? undefined : body)
+          release()
         } catch (err) {
-          res.statusCode = 500
-          res.setHeader('content-type', 'application/json; charset=utf-8')
-          res.end(JSON.stringify({ ok: false, error: String((err && err.message) || err) }))
+          void err
         }
-      },
-    }),
-  )
+      }
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachRoute, 'jarvis-sphere: state route')
+    else {
+      const dispose = attachRoute()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register ' + ROUTE_PATH + ': ' + String(err && err.message))
+  }
 
   return () => {
     for (const dispose of disposers) {
