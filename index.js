@@ -1816,10 +1816,28 @@ function parseChronicleLine(line) {
   /** Where daily reports live. */
   const reportsDir = join(chronicleDir, 'reports')
 
-  /** One day key in local time, or the day asked for. */
+  /** One day key; a supplied day must be a real calendar date. */
   function reportDay(value) {
-    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value)) return value
-    return dayKey(Date.now())
+    if (value === undefined || value === null || value === '') return { ok: true, day: dayKey(Date.now()) }
+    const text = String(value).trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(text)) return { ok: false, reason: 'day must be YYYY-MM-DD' }
+    const stamp = Date.parse(text + 'T00:00:00')
+    if (!Number.isFinite(stamp) || dayKey(stamp) !== text) return { ok: false, reason: 'day is not a real calendar date: ' + text }
+    return { ok: true, day: text }
+  }
+
+  /** Chronicle rows for one day, read from the whole file (bounded by rotation). */
+  function chronicleDay(day, limit) {
+    const rows = []
+    for (const line of readTailLines(chronicleFile, 0)) {
+      try {
+        const record = JSON.parse(line)
+        if (record && record.d === day) rows.push(record)
+      } catch (err) {
+        void err
+      }
+    }
+    return rows.slice(-Math.max(1, limit || 8))
   }
 
   /** Build the Markdown body for one day without writing it. */
@@ -1828,10 +1846,9 @@ function parseChronicleLine(line) {
     lines.push('# JARVIS 日报 · ' + day)
     lines.push('')
     lines.push('## 今天做了什么')
-    const summary = chronicleSummary()
-    const dayCount = summary.days.find((entry) => entry.day === day)
+    const dayCount = chronicle.days.get(day)
     lines.push('- 轮次 ' + (dayCount ? dayCount.turns : 0) + ' · 工具 ' + (dayCount ? dayCount.tools : 0))
-    const recent = chronicleLines(8).filter((record) => String(record.d) === day)
+    const recent = chronicleDay(day, 8)
     if (recent.length) {
       lines.push('- 最近几轮：')
       for (const record of recent) {
@@ -1871,21 +1888,32 @@ function parseChronicleLine(line) {
     lines.push('- 最新 ' + (backup.latest || '无') + ' · ' + (backup.count || 0) + ' 份 · ' + (backup.ageDays < 0 ? '时间未知' : backup.ageDays + ' 天前'))
     lines.push('')
     lines.push('## 提醒')
-    const active = alertSnapshot().active
+    const snapshot = alertSnapshot()
+    const active = snapshot.active
     if (!active.length) lines.push('- 无')
-    else for (const alert of active) lines.push('- [' + alert.level + '] ' + alert.text)
+    else {
+      for (const alert of active) lines.push('- [' + alert.level + '] ' + alert.text)
+      if (snapshot.count > active.length) lines.push('- 另有 ' + (snapshot.count - active.length) + ' 条（jarvis_alerts 查看）')
+    }
     return lines.join('\n') + '\n'
   }
 
   /** Write one report; returns its path and size. */
   function writeReport(day) {
     const target = join(reportsDir, day + '.md')
-    const body = buildReport(day)
+    const temp = target + '.' + String(process.pid) + '.tmp'
     try {
+      const body = buildReport(day)
       mkdirSync(reportsDir, { recursive: true })
-      writeFileSync(target, body)
+      writeFileSync(temp, body)
+      renameSync(temp, target)
       return { ok: true, day, file: target, bytes: Buffer.byteLength(body, 'utf8'), body }
     } catch (err) {
+      try {
+        if (existsSync(temp)) unlinkSync(temp)
+      } catch (ignored) {
+        void ignored
+      }
       return { ok: false, day, reason: String(err && err.message) }
     }
   }
@@ -1925,7 +1953,10 @@ function parseChronicleLine(line) {
         if (!value.ok) return '生成失败：' + String(value.reason || 'unknown')
         return '日报已生成：' + value.file + '（' + Math.round(value.bytes / 1024) + ' KB，' + value.day + '）'
       }
-      if (value.action === 'read') return value.body || '（空）'
+      if (value.action === 'read') {
+        if (value.reason) return '没有 ' + String(value.day || '') + ' 的日报（' + value.reason + '）'
+        return value.body || '（空）'
+      }
       if (!value.reports.length) return '还没有日报；调 jarvis_report action=create 生成今天的'
       const rows = value.reports.map((row) => '  ' + row.day + ' · ' + row.bytes + ' B')
       return ['最近 ' + value.reports.length + ' 份日报：'].concat(rows).concat(['生成：action=create，可带 day=YYYY-MM-DD']).join('\n')
@@ -1952,13 +1983,18 @@ function parseChronicleLine(line) {
       timeoutMs: 30000,
       execute: async (args) => {
         const action = String((args && args.action) || 'create')
-        const day = reportDay(args && args.day)
+        const picked = reportDay(args && args.day)
+        if (!picked.ok) return { action: 'invalid', ok: false, reason: picked.reason }
+        const day = picked.day
         if (action === 'list') return { action: 'list', reports: listReports(Number(args && args.limit) || 7) }
         if (action === 'read') {
-          const rows = listReports(30)
-          const hit = rows.find((row) => row.day === day)
-          if (!hit) return { action: 'read', day, body: '', reason: 'no report for ' + day }
-          return { action: 'read', day, body: buildReport(day) }
+          try {
+            const body = readFileSync(join(reportsDir, day + '.md'), 'utf8')
+            return { action: 'read', day, body }
+          } catch (err) {
+            const missing = err && err.code === 'ENOENT'
+            return { action: 'read', day, body: '', reason: missing ? 'no report for ' + day : String(err && err.message) }
+          }
         }
         const written = writeReport(day)
         if (!written.ok) return { action: 'create', ...written }

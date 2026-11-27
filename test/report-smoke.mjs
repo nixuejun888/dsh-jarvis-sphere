@@ -18,7 +18,7 @@ writeFileSync(join(memoryDir, 'runtime', 'MEMORY.md'), 'M'.repeat(300))
 writeFileSync(join(memoryDir, 'runtime', 'USER.md'), 'U'.repeat(20))
 const chronicleDir = join(root, 'chronicle')
 
-function makeCtx() {
+function makeCtx(options = {}) {
   const routes = new Map()
   const listeners = new Map()
   const registered = []
@@ -33,7 +33,7 @@ function makeCtx() {
       return typeof dispose === 'function' ? dispose : () => {}
     },
     get(name) {
-      if (name === 'config') return { resolveConfigByPackage: () => ({ dataDir: memoryDir }) }
+      if (name === 'config') return { resolveConfigByPackage: () => ({ dataDir: options.memoryDir || memoryDir }) }
       if (name === 'systemPrompt') return { section: () => () => {}, context: () => () => {} }
       if (name === 'tools') {
         return {
@@ -46,9 +46,9 @@ function makeCtx() {
           },
         }
       }
-      if (name === 'agents') return { list: () => [] }
-      if (name === 'tokenMeter') return { contextPressure: () => ({}) }
-      if (name === 'schedule') return { list: async () => ({ items: [], total: 0 }) }
+      if (name === 'agents') return { list: () => options.agents || [] }
+      if (name === 'tokenMeter') return { contextPressure: () => options.pressure || {} }
+      if (name === 'schedule') return { list: async () => ({ items: options.scheduleItems || [], total: (options.scheduleItems || []).length }) }
       if (name === 'webServer') return {}
       return undefined
     },
@@ -58,7 +58,7 @@ function makeCtx() {
         return () => {}
       },
     },
-    agents: { list: () => [] },
+    agents: { list: () => options.agents || [] },
     logger: { warn() {} },
   }
   return { ctx, routes, registered, listeners }
@@ -117,8 +117,11 @@ check('USER ratio is a number, not NaN', /USER\.md \d+%/u.test(body), body.match
 
   const listed = await tool.execute({ action: 'list' }, {})
   check('list returns the new report', listed.reports.length === 1 && listed.reports[0].day === created.day, listed.reports)
+  writeFileSync(created.file, 'MARKER 磁盘原文\n')
   const read = await tool.execute({ action: 'read', day: created.day }, {})
-  check('read returns the same content', read.body.includes('## 自检'), read.body.slice(0, 40))
+  check('read returns what is on disk, not a regenerated copy', read.body === 'MARKER 磁盘原文\n', read.body)
+  // restore a real report for the later checks
+  await tool.execute({ day: created.day }, {})
   const missing = await tool.execute({ action: 'read', day: '2001-01-01' }, {})
   check('reading a missing day reports a reason', missing.reason === 'no report for 2001-01-01', missing)
 }
@@ -141,6 +144,85 @@ check('USER ratio is a number, not NaN', /USER\.md \d+%/u.test(body), body.match
   check('report off registers no tool', !registered.some((d) => d.name === 'jarvis_report'), registered.map((d) => d.name))
 }
 
+// --- 4. a day older than the summary window still reports its real counts ---
+{
+  const oldDay = '2026-01-05'
+  const dir = join(root, 'c4')
+  mkdirSync(dir, { recursive: true })
+  const rows = []
+  for (let i = 0; i < 3; i += 1) {
+    rows.push(JSON.stringify({ t: oldDay + 'T03:0' + i + ':00.000Z', d: oldDay, s: 's', u: '历史标签 ' + i, tools: 4 + i }))
+  }
+  // eight newer days push the old one out of the seven-day summary window
+  for (let i = 1; i <= 8; i += 1) {
+    rows.push(JSON.stringify({ t: '2026-02-' + String(i).padStart(2, '0') + 'T03:00:00.000Z', d: '2026-02-' + String(i).padStart(2, '0'), s: 's', u: '填充 ' + i, tools: 1 }))
+  }
+  writeFileSync(join(dir, 'chronicle.jsonl'), rows.join('\n') + '\n')
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: dir, backupDir: join(root, 'b4'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_report')
+  const made = await tool.execute({ day: oldDay }, {})
+  const body = readFileSync(made.file, 'utf8')
+  check('an old day keeps its real turn count', /- 轮次 3 · 工具 15/u.test(body), body.match(/- 轮次 .*/u))
+  check('an old day keeps its labels', body.includes('历史标签 2'), body.includes('历史标签 2'))
+}
+
+// --- 5. invalid days are refused, not turned into filenames ---
+{
+  const dir = join(root, 'c5')
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: dir, backupDir: join(root, 'b5'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_report')
+  for (const bad of ['2026-13-45', 'not-a-date']) {
+    const refused = await tool.execute({ day: bad }, {})
+    check('an invalid day is refused (' + bad + ')', refused.ok === false && /day/u.test(refused.reason), refused)
+  }
+  check('an invalid day writes no file', !existsSync(join(dir, 'reports')), existsSync(join(dir, 'reports')))
+}
+
+// --- 6. read works past the list window and reports a missing day ---
+{
+  const dir = join(root, 'c6')
+  mkdirSync(join(dir, 'reports'), { recursive: true })
+  for (let i = 1; i <= 31; i += 1) {
+    const day = '2026-02-' + String(i).padStart(2, '0')
+    writeFileSync(join(dir, 'reports', day + '.md'), 'REPORT ' + day + '\n')
+  }
+  const { ctx, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: dir, backupDir: join(root, 'b6'), alerts: false })
+  const tool = registered.find((definition) => definition.name === 'jarvis_report')
+  const read = await tool.execute({ action: 'read', day: '2026-02-01' }, {})
+  check('read reaches a report outside the list window', read.body === 'REPORT 2026-02-01\n', read.body)
+  const missing = await tool.execute({ action: 'read', day: '2026-03-01' }, {})
+  check('read reports a missing day with a reason', missing.body === '' && /no report/u.test(missing.reason || ''), missing)
+  const bad = await tool.execute({ action: 'read', day: 'nope' }, {})
+  check('read refuses an invalid day', bad.ok === false, bad)
+}
+// --- 7. more alerts than the visible slots are still reported ---
+{
+  const dir = join(root, 'c7')
+  const heavy = join(root, 'c7-heavy')
+  mkdirSync(join(heavy, 'runtime'), { recursive: true })
+  writeFileSync(join(heavy, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [] }))
+  writeFileSync(join(heavy, 'runtime', 'MEMORY.md'), 'M'.repeat(9800))
+  const soon = new Date(Date.now() + 10 * 60000).toISOString()
+  const { ctx, routes, registered, listeners } = makeCtx({
+    agents: [{ session: { id: 's' } }],
+    pressure: { pressureTokens: 950, contextWindow: 1000 },
+    scheduleItems: [{ scheduledAt: soon, title: 'due' }],
+  })
+  apply(ctx, { nodeCount: 300, memoryDir: heavy, memoryDirs: [heavy], chronicleDir: dir, backupDir: join(root, 'missing-backups-7'), alerts: true, recap: false })
+  for (let i = 0; i < 3; i += 1) {
+    for (const fn of listeners.get('agent/error') || []) fn({ agent: { id: 's1' }, turn: 1, step: 1, error: new Error('boom') })
+  }
+  // let the schedule read settle so the due alert exists before the report
+  state(routes)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const tool = registered.find((definition) => definition.name === 'jarvis_report')
+  const made = await tool.execute({}, {})
+  const body = readFileSync(made.file, 'utf8')
+  check('a report with five alerts mentions the remainder', /另有 \d+ 条/u.test(body), body.match(/- 另有 .*/u))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
