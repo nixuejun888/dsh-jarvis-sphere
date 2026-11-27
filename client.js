@@ -1645,72 +1645,8 @@ window.__ModuleLoader__.load({
         ctx.stroke()
       }
 
-      // ---- 准星括弧：整圈公转、呼吸、端点光珠与拖尾；有工具在跑时加速 ----
-      var spinLite = Math.min(1, energy)
-      var gyro = this.time * (0.55 + 0.95 * spinLite)
-      var breath = 1 + 0.018 * Math.sin(this.time * 1.4)
-      var retR = R * 1.34 * breath
-      var retAlpha = (0.14 + 0.2 * lit + 0.18 * spinLite) * alphaScale * flick
-      ctx.lineCap = 'round'
-      for (var rb = 0; rb < 4; rb += 1) {
-        var baseAng = gyro + rb * (Math.PI / 2)
-        var spread = 0.22 + 0.10 * spinLite + 0.035 * Math.sin(this.time * 2.3 + rb * 1.7)
-        // trailing ghost arcs make the rotation readable
-        for (var gh = 5; gh >= 1; gh -= 1) {
-          var ghostR = retR * (1 - gh * 0.004)
-          ctx.strokeStyle = rgba(mix(base, hi, 0.2), retAlpha * (0.20 / gh))
-          ctx.lineWidth = 1.1
-          ctx.beginPath()
-          ctx.arc(cx, cy, ghostR, baseAng - gh * 0.045 - spread / 2, baseAng - gh * 0.045 + spread / 2)
-          ctx.stroke()
-        }
-        ctx.strokeStyle = rgba(mix(base, hi, 0.35), retAlpha)
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.arc(cx, cy, retR, baseAng - spread / 2, baseAng + spread / 2)
-        ctx.stroke()
-        // glowing beads at both ends, pulsing in opposite phase
-        var beadPulse = 0.5 + 0.5 * Math.sin(this.time * 3.1 + rb * 1.9)
-        for (var be = 0; be < 2; be += 1) {
-          var ea = baseAng + (be === 0 ? -1 : 1) * spread / 2
-          var bx = cx + Math.cos(ea) * retR
-          var by = cy + Math.sin(ea) * retR
-          ctx.fillStyle = rgba(hi, retAlpha * (1.1 + 0.9 * beadPulse))
-          ctx.beginPath()
-          ctx.arc(bx, by, 1.5 + 1.1 * beadPulse, 0, TAU)
-          ctx.fill()
-        }
-      }
-      // a dashed connector ring between the four brackets: the gaps travel with
-      // the gyro, which makes the rotation unmistakable even when idle
-      ctx.save()
-      ctx.lineWidth = 1
-      for (var dash = 0; dash < 28; dash += 1) {
-        if (dash % 2 === 1) continue
-        var d0 = gyro + (dash / 28) * TAU
-        var d1 = d0 + (TAU / 28) * 0.62
-        ctx.strokeStyle = rgba(mix(base, hi, 0.4), retAlpha * 0.42)
-        ctx.beginPath()
-        ctx.arc(cx, cy, retR * 0.988, d0, d1)
-        ctx.stroke()
-      }
-      ctx.restore()
-      // two comets orbiting the bracket ring, each with a short fading tail
-      for (var cm = 0; cm < 2; cm += 1) {
-        var cmAng = this.time * (0.42 + 0.5 * spinLite) * (cm === 0 ? 1 : -1) + cm * Math.PI
-        for (var tail = 6; tail >= 0; tail -= 1) {
-          var ta2 = cmAng - tail * 0.035 * (cm === 0 ? 1 : -1)
-          var tr = retR * (1.002 - tail * 0.0012)
-          var tx = cx + Math.cos(ta2) * tr
-          var ty = cy + Math.sin(ta2) * tr
-          var ta = (1 - tail / 7) * (0.5 + 0.4 * spinLite) * alphaScale
-          ctx.fillStyle = rgba(hi, ta)
-          ctx.beginPath()
-          ctx.arc(tx, ty, tail === 0 ? 2.2 : 1.4, 0, TAU)
-          ctx.fill()
-        }
-      }
-      ctx.lineCap = 'butt'
+      // ---- 外层粒子：绕球公转的尘埃、亮珠与向外流动的粒子 ----
+      this.drawOrbitParticles(ctx, cx, cy, R, base, accent, hi, alphaScale, energy)
 
       // ---- 轮廓环：给球体一条清晰的边 ----
       ctx.strokeStyle = rgba(mix(base, hi, 0.25), (0.05 + 0.09 * lit) * alphaScale * flick)
@@ -1825,139 +1761,90 @@ window.__ModuleLoader__.load({
      * encoded in the node dust; this only draws a thin edge line when a
      * reading crosses its warning line, where a warning wants to be seen.
      */
-    SphereEngine.prototype.drawGaugeGlow = function (ctx, cx, cy, R, base, accent, hi, alpha) {
-      var health = this.health
-      if (!health) return
-      var pal = this.palette || {}
-      var clamp = function (v) {
-        var n = Number(v) || 0
-        return n < 0 ? 0 : n > 1 ? 1 : n
-      }
-      var memory = clamp(health.memoryRatio)
-      var pressure = clamp(health.contextRatio)
-      var t = this.time || 0
-      // a segmented belt that rotates: each segment pulses, so the reading
-      // reads as a living meter instead of a painted line
-      var belt = function (level, tint, radius, dir, segs, weight) {
-        if (level < 0.35) return
-        var step = TAU / segs
-        var rot = t * (0.30 + 0.95 * level) * dir
-        ctx.save()
-        ctx.globalCompositeOperation = 'lighter'
-        ctx.lineCap = 'round'
-        for (var i = 0; i < segs; i += 1) {
-          var wave = 0.55 + 0.45 * Math.sin(t * 2.4 + i * 1.7)
-          var span = step * (0.20 + 0.22 * level + 0.08 * Math.sin(t * 1.7 + i * 0.9))
-          var from = rot + i * step
-          ctx.strokeStyle = rgba(tint, (0.06 + 0.40 * level * wave) * alpha)
-          ctx.lineWidth = (1.0 + weight * level) * (0.7 + 0.4 * wave)
-          ctx.beginPath()
-          ctx.arc(cx, cy, radius, from, from + span)
-          ctx.stroke()
-          // a bead rides the head of every segment
-          var beat = 0.5 + 0.5 * Math.sin(t * 3.6 + i * 2.1)
-          if (beat > 0.62) {
-            var hx = cx + Math.cos(from + span) * radius
-            var hy = cy + Math.sin(from + span) * radius
-            ctx.fillStyle = rgba(hi, (beat - 0.62) * 2.0 * alpha * level)
+    /**
+     * The old warning rings are gone: the outer layer is pure particles now, so
+     * there is nothing static to rotate or to mistake for a painted line.
+     */
+    SphereEngine.prototype.drawGaugeGlow = function () {}
+
+
+    /**
+     * Outer particle field: dust on tilted orbits, bright beads and a few
+     * particles streaming outward. Everything is time-driven, so it reacts to
+     * the tool rate (speed and brightness) without any per-frame state.
+     */
+    SphereEngine.prototype.drawOrbitParticles = function (ctx, cx, cy, R, base, accent, hi, alpha, energy) {
+      var t = this.time
+      var lit = Math.min(1, Number(energy) || 0)
+      var boost = 1 + 0.9 * lit
+      var health = this.health || {}
+      var memory = Number(health.memoryRatio) || 0
+      var COUNT = 260
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      for (var i = 0; i < COUNT; i += 1) {
+        var h1 = (i * 0.6180339887) % 1
+        var h2 = (i * 0.4142135624) % 1
+        var h3 = (i * 0.7320508076) % 1
+        var rad = R * (1.03 + 0.30 * h1)
+        var dir = h3 > 0.5 ? 1 : -1
+        var speed = (0.04 + 0.42 * h2) * dir * boost
+        var ang = h3 * TAU + t * speed
+        var tilt = h2 * 1.2 - 0.6
+        var squash = 0.30 + 0.55 * h3
+        var ox = Math.cos(ang) * rad
+        var oy = Math.sin(ang) * rad * squash
+        var px = cx + ox * Math.cos(tilt) - oy * Math.sin(tilt)
+        var py = cy + ox * Math.sin(tilt) + oy * Math.cos(tilt)
+        var depth = (Math.sin(ang) + 1) / 2
+        var size = (0.7 + 2.1 * h2) * (0.5 + 0.5 * depth)
+        var twinkle = 0.55 + 0.45 * Math.sin(t * (1.1 + h3 * 2.1) + i * 0.7)
+        var a = (0.14 + 0.5 * depth) * twinkle * alpha * (0.7 + 0.6 * lit)
+        var tint = h1 > 0.88 ? accent : (h2 > 0.72 ? mix(base, hi, 0.65) : base)
+        ctx.fillStyle = rgba(tint, a * 0.22)
+        ctx.beginPath()
+        ctx.arc(px, py, size * 2.7, 0, TAU)
+        ctx.fill()
+        ctx.fillStyle = rgba(tint, a)
+        ctx.beginPath()
+        ctx.arc(px, py, size, 0, TAU)
+        ctx.fill()
+        if (i % 3 === 0) {
+          // three samples of this particle's own past make a comet-like trail
+          for (var tr = 1; tr <= 3; tr += 1) {
+            var pastAng = ang - tr * (0.05 + 0.06 * h2) * dir
+            var pox = Math.cos(pastAng) * rad
+            var poy = Math.sin(pastAng) * rad * squash
+            var tpx = cx + pox * Math.cos(tilt) - poy * Math.sin(tilt)
+            var tpy = cy + pox * Math.sin(tilt) + poy * Math.cos(tilt)
+            ctx.fillStyle = rgba(tint, a * (0.28 / tr))
             ctx.beginPath()
-            ctx.arc(hx, hy, 1.6, 0, TAU)
+            ctx.arc(tpx, tpy, size * (1 - tr * 0.16), 0, TAU)
             ctx.fill()
           }
         }
-        ctx.restore()
       }
-      var cool = (pal.violet || base)
-      belt(memory, cool, R * 1.012, 1, 18, 2.0)
-      if (pressure >= 0.6) belt(pressure, this.alert || { r: 255, g: 110, b: 110 }, R * 1.045, -1, 8, 2.6)
-      if (memory > 0.02) {
-        var markAng = -Math.PI / 2 + memory * TAU
-        var mx2 = cx + Math.cos(markAng) * R * 1.012
-        var my2 = cy + Math.sin(markAng) * R * 1.012
-        ctx.save()
-        ctx.globalCompositeOperation = 'lighter'
-        ctx.fillStyle = rgba(accent, 0.28 * alpha)
+      // particles streaming outward from the rim; memory fill makes them denser
+      var streams = 6 + Math.round(memory * 6)
+      for (var s = 0; s < streams; s += 1) {
+        var phase = (t * (0.18 + 0.05 * s) + s * 0.37) % 1
+        var ang2 = s * 0.79 + t * 0.08
+        var rad2 = R * (1.0 + 0.34 * phase)
+        var fade = (1 - phase) * (0.55 + 0.3 * lit) * alpha
+        var sx = cx + Math.cos(ang2) * rad2
+        var sy = cy + Math.sin(ang2) * rad2 * 0.52
+        ctx.fillStyle = rgba(mix(base, hi, 0.7), fade * 0.25)
         ctx.beginPath()
-        ctx.arc(mx2, my2, 7, 0, TAU)
+        ctx.arc(sx, sy, 5.5 * (1 - phase) + 1.4, 0, TAU)
         ctx.fill()
-        ctx.fillStyle = rgba(accent, 0.95 * alpha)
+        ctx.fillStyle = rgba(mix(base, hi, 0.85), fade)
         ctx.beginPath()
-        ctx.arc(mx2, my2, 2.4, 0, TAU)
+        ctx.arc(sx, sy, 1.6 + (1 - phase) * 1.4, 0, TAU)
         ctx.fill()
-        ctx.restore()
       }
-
-      // rim ripple: a bright arc that travels around the silhouette, so the
-      // sphere has a moving highlight even when nothing else changes
-      ctx.save()
-      ctx.globalCompositeOperation = 'lighter'
-      var rippleAng = t * 0.9
-      for (var rp = 0; rp < 3; rp += 1) {
-        var ra = rippleAng + rp * (TAU / 3)
-        var rg = ctx.createLinearGradient(
-          cx + Math.cos(ra - 0.5) * R, cy + Math.sin(ra - 0.5) * R,
-          cx + Math.cos(ra + 0.5) * R, cy + Math.sin(ra + 0.5) * R,
-        )
-        rg.addColorStop(0, rgba(hi, 0))
-        rg.addColorStop(0.5, rgba(hi, 0.20 * alpha))
-        rg.addColorStop(1, rgba(hi, 0))
-        ctx.strokeStyle = rg
-        ctx.lineWidth = 2.2
-        ctx.beginPath()
-        ctx.arc(cx, cy, R, ra - 0.5, ra + 0.5)
-        ctx.stroke()
-      }
-      ctx.restore()
-
-      // counter-rotating dashed halo so two layers visibly pass each other
-      var haloStep = TAU / 40
-      var haloRot = -t * 0.38
-      for (var hd = 0; hd < 40; hd += 1) {
-        if (hd % 2 === 1) continue
-        ctx.strokeStyle = rgba(mix(base, hi, 0.5), 0.16 * alpha)
-        ctx.lineWidth = 1.1
-        ctx.beginPath()
-        ctx.arc(cx, cy, R * 1.075, haloRot + hd * haloStep, haloRot + hd * haloStep + haloStep * 0.55)
-        ctx.stroke()
-      }
-
-      // radar sweep: a short bright wedge that goes round the rim
-      ctx.save()
-      ctx.globalCompositeOperation = 'lighter'
-      var sweep = t * 0.9
-      for (var sw = 0; sw < 26; sw += 1) {
-        var swA = sweep - sw * 0.030
-        var swAlpha = (1 - sw / 26) * 0.16 * alpha
-        ctx.strokeStyle = rgba(hi, swAlpha)
-        ctx.lineWidth = 2.0
-        ctx.beginPath()
-        ctx.arc(cx, cy, R * 1.001, swA - 0.035, swA + 0.035)
-        ctx.stroke()
-      }
-      ctx.restore()
-
-      // three expanding halo rings, staggered, fading as they travel out
-      var haloPeriod = 2.8
-      var basePhase = (t % haloPeriod) / haloPeriod
-      for (var hr = 0; hr < 3; hr += 1) {
-        var ph = (basePhase + hr / 3) % 1
-        var hrad = R * (1.0 + 0.20 * ph)
-        ctx.strokeStyle = rgba(mix(base, hi, 0.3), (1 - ph) * 0.14 * alpha)
-        ctx.lineWidth = 1.2 + (1 - ph) * 1.3
-        ctx.beginPath()
-        ctx.arc(cx, cy, hrad, 0, TAU)
-        ctx.stroke()
-      }
-
-      // keep a whisper of the silhouette so the sphere still reads as solid
-      ctx.save()
-      ctx.lineWidth = 1
-      ctx.strokeStyle = rgba(base, 0.05 * alpha)
-      ctx.beginPath()
-      ctx.arc(cx, cy, R, 0, TAU)
-      ctx.stroke()
       ctx.restore()
     }
+
     /** Pick the gauge style; `arc` keeps the previous look for comparison. */
     SphereEngine.prototype.drawGauge = function (ctx, cx, cy, R, base, accent, hi, alpha) {
       var style = this.cfg && this.cfg.gauge === 'arc' ? 'arc' : 'glow'
