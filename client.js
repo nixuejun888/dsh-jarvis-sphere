@@ -274,6 +274,7 @@ window.__ModuleLoader__.load({
       this.memoryBornAt = 0
       this.memoryPrevCounts = null
       this.flyIns = []
+      this.comet = null
 
       this.immersive = false
       this.onKey = null
@@ -1158,7 +1159,10 @@ window.__ModuleLoader__.load({
         for (var i = 0; i < n; i++) this.burst(0.5 + 0.15 * i)
       }
       this.lastTools = tools
-      if (!prevRunning && busy) this.burst(0.35)
+      if (!prevRunning && busy) {
+        this.burst(0.35)
+        this.startComet()
+      }
     }
 
     /**
@@ -1192,6 +1196,15 @@ window.__ModuleLoader__.load({
       this.memoryRef = memory
       this.memorySlotsCache = out
       return out
+    }
+
+    /** A comet for the start of a task: it lands on the sphere and bursts. */
+    SphereEngine.prototype.startComet = function () {
+      this.comet = {
+        at: this.time,
+        ang: -Math.PI / 2 + ((this.time * 0.618) % 1) * Math.PI * 2,
+        landed: false,
+      }
     }
 
     /** Compare the new memory slots with the previous frame and queue fly-ins. */
@@ -1602,17 +1615,17 @@ window.__ModuleLoader__.load({
             var tp = Math.max(0, ease - tr * 0.055)
             var ax = cx + (slotX - cx) * tp
             var ay = cy + (slotY - cy) * tp
-            var ta = (1 - flyP) * 0.55 * alphaScale * (1 - tr * 0.2)
+            var ta = (1 - flyP) * 0.95 * alphaScale * (1 - tr * 0.16)
             ctx.fillStyle = rgba(flyTint, Math.max(0, ta))
             ctx.beginPath()
-            ctx.arc(ax, ay, 2.0 - tr * 0.3, 0, TAU)
+            ctx.arc(ax, ay, 2.9 - tr * 0.4, 0, TAU)
             ctx.fill()
           }
           if (flyP >= 1) {
             var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
-            ctx.fillStyle = rgba(flyTint, 0.28 * sparkLeft * alphaScale)
+            ctx.fillStyle = rgba(flyTint, 0.52 * sparkLeft * alphaScale)
             ctx.beginPath()
-            ctx.arc(slotX, slotY, 3 + 7 * (1 - sparkLeft), 0, TAU)
+            ctx.arc(slotX, slotY, 4 + 11 * (1 - sparkLeft), 0, TAU)
             ctx.fill()
           }
         }
@@ -1715,6 +1728,66 @@ window.__ModuleLoader__.load({
 
       // ---- 外层粒子：绕球公转的尘埃、亮珠与向外流动的粒子 ----
       this.drawOrbitParticles(ctx, cx, cy, R, base, accent, hi, alphaScale, energy)
+
+      // ---- 任务启动彗星：从画面外划入，落在球面并炸开 ----
+      if (this.comet) {
+        var cm2 = this.comet
+        var cmAge = this.time - cm2.at
+        var cmDur = 0.95
+        var cmP = Math.min(1, cmAge / cmDur)
+        var cmEase = cmP * cmP * (3 - 2 * cmP)
+        var landX = cx + Math.cos(cm2.ang) * R * 0.86
+        var landY = cy + Math.sin(cm2.ang) * R * 0.86
+        var startX = cx + Math.cos(cm2.ang + 1.25) * R * 2.45
+        var startY = cy + Math.sin(cm2.ang + 1.25) * R * 2.45
+        var ctrlX = cx + Math.cos(cm2.ang + 0.95) * R * 1.6
+        var ctrlY = cy + Math.sin(cm2.ang + 0.95) * R * 1.6
+        var quadAt = function (k) {
+          var inv = 1 - k
+          return {
+            x: inv * inv * startX + 2 * inv * k * ctrlX + k * k * landX,
+            y: inv * inv * startY + 2 * inv * k * ctrlY + k * k * landY,
+          }
+        }
+        for (var ctr = 0; ctr < 16; ctr += 1) {
+          var tk = Math.max(0, cmEase - ctr * 0.022)
+          var pt = quadAt(tk)
+          var ca = (1 - ctr / 16) * 0.75 * alphaScale
+          ctx.fillStyle = rgba(mix(hi, accent, ctr / 20), ca)
+          ctx.beginPath()
+          ctx.arc(pt.x, pt.y, 3.4 - ctr * 0.16, 0, TAU)
+          ctx.fill()
+        }
+        var head = quadAt(cmEase)
+        var headGlow = 6 + 5 * Math.sin(this.time * 16)
+        ctx.fillStyle = rgba(hi, 0.22 * alphaScale)
+        ctx.beginPath()
+        ctx.arc(head.x, head.y, headGlow * 2.2, 0, TAU)
+        ctx.fill()
+        ctx.fillStyle = rgba(hi, 0.95 * alphaScale)
+        ctx.beginPath()
+        ctx.arc(head.x, head.y, 3.2, 0, TAU)
+        ctx.fill()
+        if (cmP >= 1 && !cm2.landed) {
+          cm2.landed = true
+          this.waves.push({ r: 0.28, a: 1, s: 2.6 })
+          for (var ck = 0; ck < 18; ck += 1) this.spawnSpark(1.1)
+        }
+        if (cmP >= 1) {
+          var flash = Math.max(0, 1 - (cmAge - cmDur) / 0.7)
+          if (flash > 0) {
+            ctx.fillStyle = rgba(accent, 0.30 * flash * alphaScale)
+            ctx.beginPath()
+            ctx.arc(landX, landY, 10 + 52 * (1 - flash), 0, TAU)
+            ctx.fill()
+            ctx.fillStyle = rgba(hi, 0.55 * flash * alphaScale)
+            ctx.beginPath()
+            ctx.arc(landX, landY, 4 + 20 * (1 - flash), 0, TAU)
+            ctx.fill()
+          }
+        }
+        if (cmAge > 2.0) this.comet = null
+      }
 
       // ---- 轮廓环：给球体一条清晰的边 ----
       ctx.strokeStyle = rgba(mix(base, hi, 0.25), (0.05 + 0.09 * lit) * alphaScale * flick)
