@@ -63,6 +63,8 @@ const DEFAULTS = {
   pulse: true,
   /** Scene detection: surface which memories belong to the current work. */
   scene: true,
+  /** Stage (档 2): the sphere is the main screen and the conversation floats beside it. */
+  stage: false,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -953,6 +955,7 @@ function parseChronicleLine(line) {
         add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
       }
     }
+    add('layout', 'ok', cfg.stage === true ? 'stage mode is on (the sphere owns the centre)' : 'stage mode is off; Ctrl+Shift+K switches it on')
     add('detail', registered.detail ? 'ok' : 'degraded', registered.detail ? 'read-only detail route registered' : 'detail route is not registered; the sphere cannot open its panel')
     add('scene', cfg.scene === false ? 'skip' : registered.scene && registered.contextTool ? 'ok' : 'degraded', cfg.scene === false ? 'turned off by config' : registered.scene && registered.contextTool ? 'prompt context and jarvis_context are ready' : 'scene hint missing (prompt context or jarvis_context did not register)')
 
@@ -1300,6 +1303,7 @@ function parseChronicleLine(line) {
         offsetX: cfg.offsetX,
         offsetY: cfg.offsetY,
         gauge: cfg.gauge,
+        stage: cfg.stage === true,
       },
     }
   }

@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
       '.jvs-probe{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}',
       /* 沉浸模式：把页面底色压暗、让面板半透明，球成为主视觉 */
       'html.jvs-immersive body{background:#05070c !important;}',
+      'html.jvs-stage body{background:#05070c !important;}',
+      'html.jvs-stage .jvs-hud{pointer-events:none;}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
       '.jvs-panel{position:absolute;z-index:2147483000;min-width:260px;max-width:380px;max-height:60vh;overflow:auto;pointer-events:auto;padding:10px 12px;border-radius:10px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.92);color:#cfe8ff;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 10px 30px rgba(0,0,0,0.45);backdrop-filter:blur(6px);}'.replace('}','}'),
@@ -233,7 +235,7 @@ window.__ModuleLoader__.load({
       }
       this.cfg = {
         enabled: true, nodeCount: 460, intensity: 1, opacity: 1,
-        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0, gauge: 'glow',
+        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0, gauge: 'glow', stage: false,
       }
       this.lastTools = -1
       this.dark = true
@@ -378,7 +380,14 @@ window.__ModuleLoader__.load({
       var cfg = this.cfg || {}
       var cx = w / 2 + (Number(cfg.offsetX) || 0)
       var cy = hgt / 2 + (Number(cfg.offsetY) || 0)
-      var R = Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
+      var stageGeo = this.stageGeometry ? this.stageGeometry() : null
+      if (stageGeo) return stageGeo
+      var stageGeo = this.stageGeometry ? this.stageGeometry() : null
+      var R = stageGeo ? stageGeo.R : Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
+      if (stageGeo) {
+        cx = stageGeo.cx
+        cy = stageGeo.cy
+      }
       return { cx: cx, cy: cy, R: R }
     }
 
@@ -556,15 +565,102 @@ window.__ModuleLoader__.load({
       if (main) main.setAttribute('data-jvs-panel', '1')
     }
 
+
+    /** Find the chat column: the first tall, wide ancestor of the composer. */
+    SphereEngine.prototype.chatColumn = function () {
+      var seed = document.querySelector('textarea') || document.querySelector('[role="main"]')
+      var node = seed
+      var best = null
+      while (node && node !== document.body) {
+        try {
+          var rect = node.getBoundingClientRect()
+          if (rect && rect.height > window.innerHeight * 0.5 && rect.width > window.innerWidth * 0.4) {
+            best = { node: node, width: rect.width }
+          }
+        } catch (err) {
+          void err
+        }
+        node = node.parentElement
+      }
+      return best
+    }
+
+    /** Stage (档 2): the sphere owns the centre, the conversation floats beside it. */
+    SphereEngine.prototype.setStage = function (on) {
+      this.stage = !!on
+      try {
+        document.documentElement.classList.toggle('jvs-stage', this.stage)
+        window.localStorage.setItem('jarvis:stage', this.stage ? '1' : '0')
+      } catch (err) {
+        void err
+      }
+      if (this.stage) this.liftChatCard()
+      else this.restoreChatCard()
+      this.onResize()
+    }
+
+    SphereEngine.prototype.liftChatCard = function () {
+      if (this.lifted) return
+      var picked = this.chatColumn()
+      if (!picked) return
+      var node = picked.node
+      this.lifted = {
+        node: node,
+        style: node.getAttribute('style') || '',
+        width: picked.width,
+      }
+      node.setAttribute('data-jvs-lifted', '1')
+      node.setAttribute('data-jvs-panel', '1')
+      var style = node.style
+      style.position = 'fixed'
+      style.top = '60px'
+      style.right = '16px'
+      style.bottom = '16px'
+      style.left = 'auto'
+      style.width = 'min(46vw, 760px)'
+      style.height = 'auto'
+      style.maxHeight = 'none'
+      style.zIndex = '40'
+      style.borderRadius = '16px'
+      style.border = '1px solid rgba(120,200,255,0.22)'
+      style.background = 'rgba(6,9,16,0.86)'
+      style.boxShadow = '0 24px 60px rgba(0,0,0,0.55)'
+      style.backdropFilter = 'blur(10px)'
+      style.overflowY = 'auto'
+      style.transition = 'none'
+    }
+
+    SphereEngine.prototype.restoreChatCard = function () {
+      if (!this.lifted) return
+      try {
+        this.lifted.node.removeAttribute('data-jvs-lifted')
+        this.lifted.node.setAttribute('style', this.lifted.style)
+      } catch (err) {
+        void err
+      }
+      this.lifted = null
+    }
+
+    /** Where the sphere sits: centre of the free area, or the stage position. */
+    SphereEngine.prototype.stageGeometry = function () {
+      var w = this.w || window.innerWidth
+      var hgt = this.h || window.innerHeight
+      if (!this.stage) return null
+      var reserved = Math.min(Math.max(w * 0.46, 380), 780)
+      var free = Math.max(360, w - reserved)
+      return { cx: free * 0.5, cy: hgt * 0.5, R: Math.min(free, hgt) * (this.immersive ? 0.42 : 0.36) }
+    }
     /** Ctrl+Shift+J 切换沉浸模式；状态存 localStorage，刷新后保持。 */
     SphereEngine.prototype.bindKeys = function () {
       if (this.onKey) return
       var self = this
       this.onKey = function (event) {
         if (!event || !event.ctrlKey || !event.shiftKey) return
-        if (event.key !== 'j' && event.key !== 'J') return
+        var key = String(event.key || '').toLowerCase()
+        if (key !== 'j' && key !== 'k') return
         event.preventDefault()
-        self.setImmersive(!self.immersive)
+        if (key === 'j') self.setImmersive(!self.immersive)
+        else self.setStage(!self.stage)
       }
       window.addEventListener('keydown', this.onKey, true)
       var saved = '0'
@@ -574,6 +670,13 @@ window.__ModuleLoader__.load({
         saved = '0'
       }
       if (saved === '1') this.setImmersive(true)
+      var savedStage = '0'
+      try {
+        savedStage = window.localStorage.getItem('jarvis:stage') || '0'
+      } catch (err) {
+        savedStage = '0'
+      }
+      if (savedStage === '1') this.setStage(true)
     }
     SphereEngine.prototype.onResize = function () {
       var rect = this.host.getBoundingClientRect()
@@ -623,6 +726,7 @@ window.__ModuleLoader__.load({
       if (typeof cfg.opacity === 'number') this.cfg.opacity = cfg.opacity
       if (typeof cfg.showHud === 'boolean') this.cfg.showHud = cfg.showHud
       if (typeof cfg.gauge === 'string') this.cfg.gauge = cfg.gauge
+      if (typeof cfg.stage === 'boolean' && cfg.stage !== !!this.stage) this.setStage(cfg.stage)
       if (typeof cfg.glow === 'boolean') this.cfg.glow = cfg.glow
       if (typeof cfg.color === 'string') this.cfg.color = cfg.color
       if (typeof cfg.offsetX === 'number') this.cfg.offsetX = cfg.offsetX
@@ -911,7 +1015,12 @@ window.__ModuleLoader__.load({
 
       var cx = w / 2 + cfg.offsetX
       var cy = hgt / 2 + cfg.offsetY
-      var R = Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
+      var stageGeo = this.stageGeometry ? this.stageGeometry() : null
+      var R = stageGeo ? stageGeo.R : Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
+      if (stageGeo) {
+        cx = stageGeo.cx
+        cy = stageGeo.cy
+      }
       var f = 3.15
 
       var cosY = Math.cos(this.yaw)
@@ -1642,7 +1751,6 @@ window.__ModuleLoader__.load({
     }
   },
 })
-
 
 
 
