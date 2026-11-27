@@ -234,6 +234,23 @@ const userMessage = (text) => ({ type: 'user/message', data: { role: 'user', con
   const onlyRow = JSON.parse(readFileSync(join(sysDir, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[0])
   check('a message with only scaffolding has an empty label', onlyRow.u === '', onlyRow.u)
 }
+// --- 9. a lost newline does not silently drop the glued record ---
+{
+  const gluedDir = join(root, 'glued')
+  mkdirSync(gluedDir, { recursive: true })
+  const gluedFile = join(gluedDir, 'chronicle.jsonl')
+  const a = JSON.stringify({ t: '2026-01-15T03:00:00.000Z', d: '2026-01-15', s: 'sa', u: '第一条', tools: 1 })
+  const b = JSON.stringify({ t: '2026-01-15T04:00:00.000Z', d: '2026-01-15', s: 'sb', u: '第二条', tools: 2 })
+  writeFileSync(gluedFile, a + '\n' + b + a + '\n')
+  const { ctx, routes, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, chronicleDir: gluedDir })
+  const summary = state(routes).chronicle
+  check('a glued record is recovered, not dropped', summary?.trackedDays === 1, summary?.trackedDays)
+  const tool = registered.find((definition) => definition.name === 'jarvis_chronicle')
+  const value = await tool.execute({ limit: 10 }, {})
+  check('every recovered record is listed', value.recent.length === 3, value.recent.length)
+  check('recovered records keep their labels', value.recent.map((r) => r.u).join('|') === '第一条|第二条|第一条', value.recent.map((r) => r.u))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

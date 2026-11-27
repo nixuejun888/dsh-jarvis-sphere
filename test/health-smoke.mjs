@@ -227,32 +227,32 @@ function read(routes) {
   check('persona reports its length', (personaFile?.chars || 0) > 50, personaFile?.chars)
 
   const fromConfig = makeCtx()
-  apply(fromConfig.ctx, { nodeCount: 300, personaText: 'ZQX 覆盖人格用于测试' })
+  apply(fromConfig.ctx, { nodeCount: 300, personaText: 'ZQX 覆盖人格用于测试' , chronicle: false })
   const personaConfig = read(fromConfig.routes).body?.persona
   check('personaText override wins over the file', personaConfig?.source === 'config' && personaConfig?.chars === 12, [personaConfig?.source, personaConfig?.chars])
   check('override changes the revision tag', personaConfig?.version !== personaFile?.version, [personaFile?.version, personaConfig?.version])
 
   const disabled = makeCtx()
-  apply(disabled.ctx, { nodeCount: 300, persona: false })
+  apply(disabled.ctx, { nodeCount: 300, persona: false , chronicle: false })
   check('persona can be turned off', read(disabled.routes).body?.persona?.active === false, read(disabled.routes).body?.persona?.active)
 
   const customFile = join(dir, 'custom-persona.md')
   writeFileSync(customFile, '自定义人格文件内容，用于断言来源。')
   const fromCustom = makeCtx()
-  apply(fromCustom.ctx, { nodeCount: 300, personaFile: customFile })
+  apply(fromCustom.ctx, { nodeCount: 300, personaFile: customFile , chronicle: false })
   const personaCustom = read(fromCustom.routes).body?.persona
   check('personaFile overrides the package file', personaCustom?.source === 'file' && personaCustom?.chars === 17, [personaCustom?.source, personaCustom?.chars])
 const emptyFile = join(dir, 'empty-persona.md')
   writeFileSync(emptyFile, '   ')
   const fromEmpty = makeCtx()
-  apply(fromEmpty.ctx, { nodeCount: 300, personaFile: emptyFile })
+  apply(fromEmpty.ctx, { nodeCount: 300, personaFile: emptyFile , chronicle: false })
   check('an empty persona file falls back to the package file', read(fromEmpty.routes).body?.persona?.source === 'file', read(fromEmpty.routes).body?.persona?.source)
 
   const keys = Object.keys(read(fromFile.routes).body?.persona || {}).sort().join(',')
   check('persona snapshot carries exactly five fields', keys === 'active,chars,name,source,version', keys)
   check('persona text never appears in the snapshot', !read(fromFile.routes).text.includes('记忆即人格'), read(fromFile.routes).text.length)
   const missingFile = makeCtx()
-  apply(missingFile.ctx, { nodeCount: 300, personaFile: 'C:\\definitely-missing-persona.md' })
+  apply(missingFile.ctx, { nodeCount: 300, personaFile: 'C:\\definitely-missing-persona.md' , chronicle: false })
   const personaFallback = read(missingFile.routes).body?.persona
   check('a missing persona file falls back to the package file', personaFallback?.source === 'file' && personaFallback?.chars === 294, [personaFallback?.source, personaFallback?.chars])
 }

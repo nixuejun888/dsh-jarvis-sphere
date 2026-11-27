@@ -97,7 +97,7 @@ writeFileSync(join(bigDir, 'data', '.dsh-memory-bodies.json'), JSON.stringify({ 
 
 {
   const { ctx, routes, sections, effects } = makeCtx(bigDir)
-  apply(ctx, { nodeCount: 460, memorySlots: 0 })
+  apply(ctx, { nodeCount: 460, memorySlots: 0, chronicle: false })
   const state = readState(routes)
   const memory = state.body?.memory
   check('big store: all 5,000 entries counted', memory?.total === 5000, memory?.total)

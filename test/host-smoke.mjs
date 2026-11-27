@@ -99,9 +99,6 @@ check('errors counted', snap.counters.errors === 1, snap.counters.errors)
 
 // 9. HEAD and method guard
 const route = routes.get('/dsh-jarvis/state')
-let code = 0
-route.handler({ method: 'POST' }, { statusCode: 0, setHeader() {}, end() { code = 9 } })
-check('POST rejected 405', true, 'checked below')
 let postCode = 0
 route.handler({ method: 'POST' }, { statusCode: 0, setHeader() {}, end() { postCode = this.statusCode } })
 check('POST -> 405', postCode === 405, postCode)

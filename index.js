@@ -544,15 +544,11 @@ export function apply(ctx, config) {
   function aggregateChronicle(lines) {
     const days = new Map()
     for (const line of lines) {
-      try {
-        const record = JSON.parse(line)
-        if (!record || typeof record.d !== 'string') continue
+      for (const record of parseChronicleLine(line)) {
         const day = days.get(record.d) || { turns: 0, tools: 0 }
         day.turns += 1
         day.tools += Number(record.tools) || 0
         days.set(record.d, day)
-      } catch (err) {
-        void err
       }
     }
     return days
@@ -568,6 +564,35 @@ export function apply(ctx, config) {
   }
   loadChronicle()
 
+/**
+ * Parse one chronicle line. A writer that lost its trailing newline can glue
+ * two records together; recover both instead of silently dropping the line.
+ */
+function parseChronicleLine(line) {
+  const out = []
+  const adopt = (text) => {
+    try {
+      const record = JSON.parse(text)
+      if (record && typeof record.d === 'string') out.push(record)
+    } catch (err) {
+      void err
+    }
+  }
+  adopt(line)
+  if (out.length === 0 && line.includes('}{')) {
+    let rest = line
+    while (rest.length) {
+      const at = rest.indexOf('}{')
+      if (at < 0) {
+        adopt(rest)
+        break
+      }
+      adopt(rest.slice(0, at + 1))
+      rest = rest.slice(at + 1)
+    }
+  }
+  return out
+}
   /** Append one finished turn; failures are reported but never fatal. */
   function recordTurn(sessionId, origin) {
     if (cfg.chronicle === false) return
@@ -637,12 +662,7 @@ export function apply(ctx, config) {
     const lines = readTailLines(chronicleFile, limit)
     const out = []
     for (const line of lines) {
-      try {
-        const record = JSON.parse(line)
-        if (record && typeof record.d === 'string') out.push(record)
-      } catch (err) {
-        void err
-      }
+      for (const record of parseChronicleLine(line)) out.push(record)
     }
     return out.reverse()
   }

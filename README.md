@@ -77,7 +77,7 @@ node test/keeper-smoke.mjs  # 25/25
 ## 仪表：记忆 / 上下文 / 待办 / 错误
 
 球体不只会动，它报健康。HUD 首行是
-`JARVIS · ACTIVE · 14 MEM 77% · CTX 68% · 2 TASKS · 4 TOOLS`，告警（`!N ERR`）排在最前。
+`JARVIS · ACTIVE · 14 MEM 77% · CTX 68% · 7 TODAY · 2 TASKS · 4 TOOLS`，告警（`!N ERR`）排在最前。
 
 | 通道 | 数据源 | 渲染 |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ node test/keeper-smoke.mjs  # 25/25
 实现约束（都是被复查打回来过的地方）：
 
 - 两条压力弧画在球体**上方**，不压底部文字；半径按 `R*1.045 / R*1.07` 取比例，窗口再小也不重叠；
-- HUD 按优先级拼装（ERR → MEM → CTX → TASKS → TOOLS），超出预算就丢末尾，不出现 `...`；
+- HUD 按优先级拼装（ERR → MEM → CTX → TODAY → TASKS → TOOLS），超出预算就丢末尾，不出现 `...`；
 - 快照只带 Client 真正读的 9 个 cfg 键，`personaText` 之类的配置不上线；
 - 错误窗口一次扫描 + 一次 `splice` 剪枝，并在写入处就压到 4096，页面关久了重开也不会卡住 Host；
 - 事件窗口（流式帧 / 工具调用 / 错误）都有 4096 硬上限；
@@ -126,7 +126,7 @@ node test/keeper-smoke.mjs  # 25/25
 | 冲击波 | 工具调用时从球心外扩的琥珀色圆环 |
 | 泛光 bloom | 四分之一分辨率的亮部提取 + 模糊 + 加法合成，让亮点真的"发光" |
 
-HUD 首行是 `JARVIS · ACTIVE/STANDBY · N MEM · N TOOLS · N TURNS`；没有工具在跑时第二行报记忆库存
+HUD 首行是 `JARVIS · ACTIVE/STANDBY · !N ERR · N MEM xx% · CTX xx% · N TODAY · N TASKS · N TOOLS`；没有工具在跑时第二行报 `NEXT <多久后>` 或记忆库存
 （`MEMORY  2 USER · 12 WORKING · 2 SPACES · 58 DOCS`）。
 
 球心用 `destination-out` 挖空，事件视界是一圈虚线环——正文正好落在里面。
@@ -197,12 +197,12 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
 Host 半边的单元断言：
 
 ```bash
-node test/host-smoke.mjs    # 22/22  工具计数、收尾、轮次、405、卸载清路由
+node test/host-smoke.mjs    # 21/21  工具计数、收尾、轮次、405、卸载清路由
 node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启用、旧路由占位、备用路径
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
-node test/chronicle-smoke.mjs  # 29/29  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
+node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
