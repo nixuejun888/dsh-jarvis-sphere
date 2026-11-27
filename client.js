@@ -767,7 +767,16 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 节点：深度 4 档 × 光照 3 档，共 12 次批量填充 ----
-      var nodeAlpha = (0.26 + 0.4 * lit) * alphaScale
+      /* Memory fill lives in the dust itself: the fuller the store, the more
+         the constellation of memories lights up. No extra ring needed. */
+      var memFill = 0.7
+      var memoryLevel = 0
+      if (this.health) {
+        var mv = Number(this.health.memoryRatio) || 0
+        memoryLevel = mv < 0 ? 0 : mv > 1 ? 1 : mv
+        memFill = 0.62 + 0.58 * memoryLevel
+      }
+      var nodeAlpha = (0.26 + 0.4 * lit) * alphaScale * memFill
       var nodeAlphaTier = [0.10, 0.30, 0.62, 1]
       var nodeSizeTier = [0.55, 0.9, 1.35, 2.1]
       var lightMul = [0.5, 1, 1.55]
@@ -790,7 +799,7 @@ window.__ModuleLoader__.load({
           if (a < 0.006) continue
           ctx.fillStyle = rgba(nodeColorTier[si2], a)
           ctx.beginPath()
-          var radius = nodeSizeTier[si2]
+          var radius = nodeSizeTier[si2] * (0.88 + 0.34 * (memFill - 0.62))
           for (var q2 = 0; q2 < bucket.length; q2++) {
             var id = bucket[q2]
             ctx.moveTo(px[id] + radius, py[id])
@@ -1055,6 +1064,13 @@ window.__ModuleLoader__.load({
      * already drives the pulse. White is never forced: every tint comes from the
      * theme palette.
      */
+    /**
+     * Rim light instead of a ring: two soft crescents graze the sphere from
+     * opposite sides — a cool one for the memory store, a warm one for context
+     * pressure — while the fill itself lives in the node dust and the centre
+     * bloom. Nothing forms a closed circle, so the silhouette stays a sphere
+     * rather than a dial.
+     */
     SphereEngine.prototype.drawGaugeGlow = function (ctx, cx, cy, R, base, accent, hi, alpha) {
       var health = this.health
       if (!health) return
@@ -1066,52 +1082,53 @@ window.__ModuleLoader__.load({
       var memory = clamp(health.memoryRatio)
       var pressure = clamp(health.contextRatio)
       var saved = ctx.globalCompositeOperation
-      /* a slow breath so a static reading still feels alive; driven by the same
-         clock the animation loop uses */
       var clock = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
       var breath = 0.94 + Math.sin(clock / 2600) * 0.06
 
-      /* Memory fill: a rim light hugging the sphere, no visible band. Four
-         stops keep the falloff soft at both ends instead of cutting a ring. */
-      if (memory > 0.01) {
-        var warm = memory >= 0.85
-        var rim = warm ? accent : (pal.violet || base)
-        var peak = (warm ? 0.44 : 0.26) * (0.25 + memory * 0.75) * alpha * breath
-        var rimOuter = R * 1.22
-        var grad = ctx.createRadialGradient(cx, cy, R * 0.80, cx, cy, rimOuter)
-        grad.addColorStop(0, rgba(rim, 0))
-        grad.addColorStop(0.86, rgba(rim, peak * 0.05))
-        grad.addColorStop(0.965, rgba(rim, peak * 0.75))
-        grad.addColorStop(1, rgba(rim, 0))
+      /* one crescent: gradient centred off to one side, so its visible part is
+         an arc on that side and fades out across the sphere */
+      var crescent = function (tint, strength, ox, oy, reach) {
+        var gx = cx + ox * R
+        var gy = cy + oy * R
+        var grad = ctx.createRadialGradient(gx, gy, R * 0.62, gx, gy, R * reach)
+        grad.addColorStop(0, rgba(tint, 0))
+        grad.addColorStop(0.80, rgba(tint, strength * 0.10))
+        grad.addColorStop(0.95, rgba(tint, strength))
+        grad.addColorStop(1, rgba(tint, 0))
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
         ctx.fillStyle = grad
         ctx.beginPath()
-        ctx.arc(cx, cy, rimOuter, 0, Math.PI * 2)
+        ctx.arc(gx, gy, R * reach, 0, Math.PI * 2)
         ctx.fill()
         ctx.restore()
       }
 
-      /* Context pressure: the light the core gives off. Cool violet under 60%,
-         drifting to the warning colour above it; a soft bloom, no ring. */
+      // memory: cool crescent from the upper left, amber once the store is nearly full
+      if (memory > 0.01) {
+        var nearFull = memory >= 0.85
+        var cool = nearFull ? accent : (pal.violet || base)
+        crescent(cool, (0.06 + memory * 0.15) * alpha * breath, -0.30, -0.38, 1.03)
+      }
+      // context: warm crescent from the lower right, red past the warning line
       if (pressure > 0.01) {
-        var cool = pal.violet || base
-        var mid = this.mixRgb(cool, accent, 0.55)
-        var hotCol = this.alert || accent
-        var mood = pressure < 0.6
-          ? this.mixRgb(cool, mid, pressure / 0.6)
-          : this.mixRgb(mid, hotCol, (pressure - 0.6) / 0.4)
-        var coreR = R * 0.95
-        var core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR)
-        core.addColorStop(0, rgba(mood, (0.06 + pressure * 0.20) * alpha * breath))
-        core.addColorStop(0.35, rgba(mood, (0.03 + pressure * 0.10) * alpha))
-        core.addColorStop(0.72, rgba(mood, (0.01 + pressure * 0.03) * alpha))
+        var hot = pressure >= 0.85
+        var warm = hot ? (this.alert || accent) : this.mixRgb(pal.violet || base, accent, 0.45 + pressure * 0.35)
+        crescent(warm, (0.03 + pressure * 0.10) * alpha * breath, 0.26, 0.32, 1.01)
+      }
+
+      // core light: the pressure reading, kept soft so the dust stays readable
+      if (pressure > 0.01) {
+        var mood = this.mixRgb(pal.violet || base, this.alert || accent, pressure * 0.7)
+        var core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.9)
+        core.addColorStop(0, rgba(mood, (0.04 + pressure * 0.10) * alpha * breath))
+        core.addColorStop(0.5, rgba(mood, (0.015 + pressure * 0.04) * alpha))
         core.addColorStop(1, rgba(mood, 0))
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
         ctx.fillStyle = core
         ctx.beginPath()
-        ctx.arc(cx, cy, coreR, 0, Math.PI * 2)
+        ctx.arc(cx, cy, R * 0.9, 0, Math.PI * 2)
         ctx.fill()
         ctx.restore()
       }
