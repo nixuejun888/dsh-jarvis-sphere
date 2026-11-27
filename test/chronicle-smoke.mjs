@@ -312,6 +312,29 @@ const userMessage = (text) => ({ type: 'user/message', data: { role: 'user', con
   }
   check('a session without a message view does not throw', threw === null, threw === null ? null : String(threw.message))
 }
+// --- 12. the localized Mnemon snapshot must not become the label ---
+{
+  const dir = join(root, 'label-snapshot')
+  const { ctx, listeners } = makeCtx()
+  apply(ctx, { nodeCount: 300, chronicleDir: dir })
+  const session = {
+    id: 'session-snap',
+    deriveMessages() {
+      return [
+        { role: 'user', content: [{ type: 'text', text: '以后备份都放到 D 盘' }] },
+        { role: 'assistant', content: [{ type: 'text', text: '好' }] },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'MNEMON 运行时记忆快照\n条目注解默认为 importance=normal…\nUSER.md（用户画像）\n…' }],
+        },
+      ]
+    },
+  }
+  emit(listeners, 'session/event', session, { type: 'step/start', data: { turn: 1, step: 1 } })
+  emit(listeners, 'session/event', session, { type: 'turn/end', data: { turn: 1 } })
+  const row = JSON.parse(readFileSync(join(dir, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean)[0])
+  check('a Chinese Mnemon snapshot is not the label', row.u === '以后备份都放到 D 盘', row.u)
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

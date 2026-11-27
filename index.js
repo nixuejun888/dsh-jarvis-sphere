@@ -136,7 +136,7 @@ function keepNewestByBytes(lines, budgetBytes, limit) {
 }
 
 /** Harness-injected text blocks are context, not something the user said. */
-const INJECTED_LABEL = /^(<system-reminder>|Time sampled while preparing|\[MNEMON\]|MNEMON RUNTIME)/u
+const INJECTED_LABEL = /^(<system-reminder>|Time sampled while preparing|\[MNEMON\]|MNEMON (?:RUNTIME MEMORY SNAPSHOT|VIEW TOOLS|VIEW ROUTES|VIEW AVAILABILITY)|MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性))/u
 
 /**
  * The human's own words from a recorded user message, clipped. Injected
