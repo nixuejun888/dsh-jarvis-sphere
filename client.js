@@ -1610,15 +1610,15 @@ window.__ModuleLoader__.load({
             var tp = Math.max(0, ease - tr * 0.055)
             var ax = cx + (slotX - cx) * tp
             var ay = cy + (slotY - cy) * tp
-            var ta = (1 - flyP) * 0.9 * alphaScale * (1 - tr * 0.2)
-            ctx.fillStyle = rgba(flyTint, Math.max(0, ta))
+            var ta = (1 - flyP) * 0.55 * alphaScale * (1 - tr * 0.2)
+            ctx.fillStyle = rgba(flyTint, Math.max(0, ta * 0.6))
             ctx.beginPath()
             ctx.arc(ax, ay, 2.3 - tr * 0.32, 0, TAU)
             ctx.fill()
           }
           if (flyP >= 1) {
             var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
-            ctx.fillStyle = rgba(flyTint, 0.55 * sparkLeft * alphaScale)
+            ctx.fillStyle = rgba(flyTint, 0.28 * sparkLeft * alphaScale)
             ctx.beginPath()
             ctx.arc(slotX, slotY, 3 + 7 * (1 - sparkLeft), 0, TAU)
             ctx.fill()
@@ -1671,7 +1671,7 @@ window.__ModuleLoader__.load({
           var ddx = ex2 * ct2 - ey2 * st2
           var ddy = ex2 * st2 + ey2 * ct2
           var depth2 = (Math.sin(ang2) + 1) / 2
-          ctx.fillStyle = rgba(mix(base, hi, 0.45), (0.08 + 0.20 * depth2) * alphaScale)
+          ctx.fillStyle = rgba(mix(base, hi, 0.45), (0.04 + 0.10 * depth2) * alphaScale)
           ctx.beginPath()
           ctx.arc(cx + ddx, cy + ddy, 0.8 + 0.8 * depth2, 0, TAU)
           ctx.fill()
@@ -1689,10 +1689,10 @@ window.__ModuleLoader__.load({
           var bJitter = 1 + (bh - 0.5) * 0.16
           var bx = cx + Math.cos(bAng) * wr * bJitter
           var by = cy + Math.sin(bAng) * wr * bJitter * 0.86
-          var bAlpha = wave.a * (0.55 - 0.35 * bh) * alphaScale
+          var bAlpha = wave.a * (0.30 - 0.18 * bh) * alphaScale
           ctx.fillStyle = rgba(bh > 0.6 ? accent : hi, Math.max(0, bAlpha))
           ctx.beginPath()
-          ctx.arc(bx, by, 1.4 + 2.2 * (1 - bh), 0, TAU)
+          ctx.arc(bx, by, 1.1 + 1.5 * (1 - bh), 0, TAU)
           ctx.fill()
         }
       }
@@ -1709,9 +1709,9 @@ window.__ModuleLoader__.load({
           for (var q = 0; q < 20; q += 1) {
             var aa2 = chainStart + (q / 19) * chainSpan
             var on = q < lit
-            ctx.fillStyle = rgba(on ? accent : base, (on ? 0.42 : 0.10) * alphaScale)
+            ctx.fillStyle = rgba(on ? accent : base, (on ? 0.16 : 0.05) * alphaScale)
             ctx.beginPath()
-            ctx.arc(cx + Math.cos(aa2) * R * 1.10, cy + Math.sin(aa2) * R * 1.10, on ? 1.7 : 1.0, 0, TAU)
+            ctx.arc(cx + Math.cos(aa2) * R * 1.10, cy + Math.sin(aa2) * R * 1.10, on ? 1.2 : 0.8, 0, TAU)
             ctx.fill()
           }
         }
@@ -1785,11 +1785,11 @@ window.__ModuleLoader__.load({
         var band = 30
         var sg = ctx.createLinearGradient(0, scanY - band, 0, scanY + band)
         sg.addColorStop(0, rgba(base, 0))
-        sg.addColorStop(0.5, rgba(base, (0.022 + 0.045 * lit) * alphaScale))
+        sg.addColorStop(0.5, rgba(base, (0.008 + 0.016 * lit) * alphaScale))
         sg.addColorStop(1, rgba(base, 0))
         ctx.fillStyle = sg
         ctx.fillRect(cx - R, scanY - band, R * 2, band * 2)
-        ctx.strokeStyle = rgba(hi, (0.045 + 0.07 * lit) * alphaScale)
+        ctx.strokeStyle = rgba(hi, (0.016 + 0.024 * lit) * alphaScale)
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.moveTo(cx - R, scanY)
@@ -1835,7 +1835,7 @@ window.__ModuleLoader__.load({
           ctx.save()
           ctx.setTransform(1, 0, 0, 1, 0, 0)
           ctx.globalCompositeOperation = 'lighter'
-          ctx.globalAlpha = 0.48 * Math.min(1, alphaScale * 1.2)
+          ctx.globalAlpha = 0.30 * Math.min(1, alphaScale * 1.2)
           ctx.drawImage(bc, 0, 0, this.canvas.width, this.canvas.height)
           ctx.restore()
         }
@@ -1918,7 +1918,7 @@ window.__ModuleLoader__.load({
         var depth = (Math.sin(ang) + 1) / 2
         var size = (0.7 + 2.1 * h2) * (0.5 + 0.5 * depth)
         var twinkle = 0.55 + 0.45 * Math.sin(t * (1.1 + h3 * 2.1) + i * 0.7)
-        var a = (0.08 + 0.30 * depth) * twinkle * alpha * (0.7 + 0.6 * lit + 0.5 * (this.errPulseAt ? Math.max(0, 1 - (this.time - this.errPulseAt) / 1.2) : 0))
+        var a = (0.08 + 0.30 * depth) * twinkle * alpha * (0.7 + 0.6 * lit + 0.12 * (this.errPulseAt ? Math.max(0, 1 - (this.time - this.errPulseAt) / 1.2) : 0))
         var errPulse = this.errPulseAt ? Math.max(0, 1 - (this.time - this.errPulseAt) / 1.2) : 0
       var warm = (Number(health.contextRatio) || 0) > 0.85 && h3 > 0.8
         var tint = errPulse > 0.4
