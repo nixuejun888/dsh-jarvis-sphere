@@ -37,7 +37,7 @@ function makeCtx(options = {}) {
         return undefined
       }
       if (name === 'config') return { resolveConfigByPackage: () => ({ dataDir: options.memoryDir || memoryDir }) }
-      if (name === 'systemPrompt') return options.noPrompt ? undefined : { section: () => () => {} }
+      if (name === 'systemPrompt') return options.noPrompt ? undefined : { section: () => () => {}, context: () => () => {} }
       if (name === 'tools') {
         if (options.noTools) return undefined
         if (options.toolsThrow) {

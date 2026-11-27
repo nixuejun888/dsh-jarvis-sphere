@@ -746,7 +746,7 @@ function parseChronicleLine(line) {
       { name: 'chronicle', ok: registered.chronicleTool, disabled: cfg.chronicle === false },
       { name: 'doctor', ok: registered.doctor, disabled: false },
       { name: 'backup', ok: registered.backup, disabled: cfg.backup === false },
-      { name: 'alerts', ok: registered.alertTool, disabled: cfg.alerts === false },
+      { name: 'alerts', ok: registered.alertTool && (registered.alerts || cfg.alerts === false), disabled: cfg.alerts === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
@@ -861,8 +861,16 @@ function parseChronicleLine(line) {
       alerts.lastAt.set(alert.id, now)
       alerts.active.set(alert.id, { id: alert.id, level: alert.level, text: alert.text, at: new Date(now).toISOString() })
     }
-    for (const id of [...alerts.active.keys()]) if (!seen.has(id)) alerts.active.delete(id)
-    for (const id of [...alerts.acknowledged]) if (!seen.has(id)) alerts.acknowledged.delete(id)
+    /* An acknowledged alert is not in `active`, so retirement must consider
+       both maps: otherwise its acknowledgement would outlive its condition and
+       silence the alert forever. */
+    const known = new Set([...alerts.active.keys(), ...alerts.acknowledged])
+    for (const id of known) {
+      if (seen.has(id)) continue
+      alerts.active.delete(id)
+      alerts.acknowledged.delete(id)
+      alerts.lastAt.set(id, now)
+    }
     return [...alerts.active.values()]
   }
 
@@ -902,7 +910,8 @@ function parseChronicleLine(line) {
   function acknowledgeAlerts(ids) {
     refreshAlerts()
     const active = [...alerts.active.values()].map((alert) => alert.id)
-    const requested = Array.isArray(ids) ? ids.map(String) : []
+    if (ids !== undefined && ids !== null && !Array.isArray(ids) && typeof ids !== 'string') return { acked: [], ignored: [] }
+    const requested = ids === undefined || ids === null ? [] : (Array.isArray(ids) ? ids : [ids]).map(String)
     const targets = requested.length ? requested.filter((id) => active.includes(id)) : active
     const ignored = requested.filter((id) => !active.includes(id))
     for (const id of targets) {
@@ -1448,7 +1457,7 @@ function parseChronicleLine(line) {
         const lines = []
         lines.push(value.acked.length ? '已确认 ' + value.acked.join(', ') + '（条件消失前不再提醒）' : '没有需要确认的提醒')
         if (value.ignored.length) lines.push('忽略未知 id：' + value.ignored.join(', '))
-        return lines.join('\\n')
+        return lines.join('\n')
       }
       if (!value.alerts.count) return '没有待处理的提醒'
       lines.push('待处理提醒 ' + value.alerts.count + ' 条（按紧急程度排序，HUD/提示里最多显示 ' + ALERT_CONTEXT_MAX + ' 条）：')

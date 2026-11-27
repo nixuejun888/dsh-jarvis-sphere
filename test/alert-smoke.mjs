@@ -144,65 +144,87 @@ function alertContext(contexts) {
   Date.now = () => clock
   try {
     const options = { pressure: { pressureTokens: 950, contextWindow: 1000 } }
-    const { ctx, routes, contexts } = makeCtx(options)
+    const { ctx, routes, contexts, registered } = makeCtx(options)
     apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: join(root, 'backups-3'), alerts: true })
+    const alertTool = registered.find((definition) => definition.name === 'jarvis_alerts')
     const before = state(routes).alerts
     check('context alert fires', (before.active || []).some((alert) => alert.id === 'context'), before)
+    check('the prompt text is not empty while an alert is active', alertContext(contexts).text({}).length > 0, alertContext(contexts).text({}))
 
-    const tool = null
-    void tool
-    const text = alertContext(contexts).text({})
-    check('the prompt text is not empty while an alert is active', text.length > 0, text)
-
-    // acknowledge through the tool, then hold the condition: still silent
-    const { ctx: toolCtx, registered: toolRegistered } = makeCtx(options)
-    apply(toolCtx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: join(root, 'backups-4'), alerts: true })
-    const alertTool = toolRegistered.find((definition) => definition.name === 'jarvis_alerts')
+    // acknowledge on this same instance, then hold the condition
     const acked = await alertTool.execute({ action: 'ack' }, {})
-    check('ack returns what it cleared', Array.isArray(acked.acked) && acked.acked.length > 0, acked)
+    check('ack reports the cleared ids', Array.isArray(acked.acked) && acked.acked.length > 0, acked)
     clock += 10 * 60000
-    const during = await alertTool.execute({}, {})
-    check('an acked condition stays silent while it stands', during.alerts.count === 0, during.alerts)
+    const during = state(routes).alerts
+    check('an acked condition stays silent while it stands', !(during.active || []).some((alert) => alert.id === 'context'), during)
 
-    // the condition clears, so the acknowledgement is released
+    // the condition clears: the acknowledgement must be released with it
+    // (contextHealth caches for 2 s, so step past that cache to observe it)
     options.pressure = {}
+    clock += 10 * 1000
     state(routes)
+    check('a cleared condition drops its acknowledgement', !(state(routes).alerts.active || []).some((alert) => alert.id === 'context'), state(routes).alerts)
     clock += 1 * 60000
     options.pressure = { pressureTokens: 950, contextWindow: 1000 }
     const suppressed = state(routes).alerts
     check('a returning condition is suppressed inside the cooldown', !(suppressed.active || []).some((alert) => alert.id === 'context'), suppressed)
 
-    // once the cooldown passes it comes back
+    // after the cooldown it returns on this same instance
     clock += 31 * 60000
     const revived = state(routes).alerts
     check('a returning condition alerts again after the cooldown', (revived.active || []).some((alert) => alert.id === 'context'), revived)
 
-    // unknown ids are reported, not invented
-    const unknown = await alertTool.execute({ action: 'ack', ids: ['nope'] }, {})
-    check('unknown ids are ignored and reported', unknown.acked.length === 0 && unknown.ignored.includes('nope'), unknown)
+    // a string id is a single target, never "everything"
+    const single = await alertTool.execute({ action: 'ack', ids: 'context' }, {})
+    check('a string id acknowledges only that alert', single.acked.length === 1 && single.acked[0] === 'context', single)
   } finally {
     Date.now = realNow
   }
 }
 
-// --- 4. errors and due outrank housekeeping when more than four are active ---
+// --- 3b. id shapes: unknown and malformed ids never acknowledge everything ---
 {
-  const soon = new Date(Date.now() + 10 * 60000).toISOString()
-  const { ctx, routes, contexts, listeners } = makeCtx({
+  const { ctx, routes, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: join(root, 'no-backups-3b'), alerts: true })
+  const tool = registered.find((definition) => definition.name === 'jarvis_alerts')
+  const before = state(routes).alerts
+  check('a backup alert is active for the id checks', before.count >= 1, before)
+  const unknown = await tool.execute({ action: 'ack', ids: ['nope'] }, {})
+  check('unknown ids are ignored and reported', unknown.acked.length === 0 && unknown.ignored.includes('nope'), unknown)
+  check('an unknown id leaves the real alerts alone', state(routes).alerts.count === before.count, [before.count, state(routes).alerts.count])
+  const guard = await tool.execute({ action: 'ack', ids: { all: true } }, {})
+  check('a non-array ids value acknowledges nothing', guard.acked.length === 0, guard)
+  check('a rejected ids value leaves alerts in place', state(routes).alerts.count === before.count, state(routes).alerts)
+}
+// --- 4. six conditions: count is honest, the urgent ones stay visible ---
+{
+  const soon = new Date(Date.now() + 20 * 60000).toISOString()
+  const blocker = join(root, 'blocker')
+  writeFileSync(blocker, 'x')
+  writeFileSync(join(memoryDir, 'runtime', 'MEMORY.md'), 'M'.repeat(9600))
+  const { ctx, routes, contexts, registered, listeners } = makeCtx({
     pressure: { pressureTokens: 950, contextWindow: 1000 },
     scheduleItems: [{ scheduledAt: soon, title: 'due soon' }],
+    memoryEntries: 93,
   })
-  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: join(root, 'no-backups'), alerts: true })
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(blocker, 'nested'), backupDir: join(root, 'no-backups'), alerts: true })
   state(routes)
   await new Promise((resolve) => setTimeout(resolve, 30))
   for (let i = 0; i < 3; i += 1) emit(listeners, 'agent/error', { agent: { id: 's1' }, turn: 1, step: 1, error: new Error('boom') })
-  const snapshot = state(routes).alerts
-  check('the snapshot counts every active alert', snapshot.count >= 3, snapshot)
-  check('the visible four keep the urgent ones', snapshot.active.slice(0, 2).every((alert) => ['errors', 'due', 'context', 'doctor'].includes(alert.id)), snapshot.active.map((a) => a.id))
-  const text = alertContext(contexts).text({})
-  check('the prompt says how many are hidden', snapshot.count <= 4 || /另有 \d+ 条提醒/u.test(text), text)
-}
 
+  const snapshot = state(routes).alerts
+  const ids = (snapshot.active || []).map((alert) => alert.id)
+  check('six conditions are all counted', snapshot.count === 6, [snapshot.count, ids])
+  check('only four are shown', snapshot.active.length === 4, snapshot.active.length)
+  check('errors and due survive the cap', ids.includes('errors') && ids.includes('due'), ids)
+  check('a failing self-check survives the cap', ids.includes('doctor'), ids)
+  const text = alertContext(contexts).text({})
+  check('the prompt reports the hidden alerts', /另有 2 条提醒/u.test(text), text)
+
+  const tool = registered.find((definition) => definition.name === 'jarvis_alerts')
+  const listed = await tool.execute({}, {})
+  check('the tool lists every alert', listed.alerts.count === 6 && listed.alerts.active.length === 6, [listed.alerts.count, listed.alerts.active.length])
+}
 // --- 5. alerts: false leaves no context but the snapshot stays valid ---
 
 {
