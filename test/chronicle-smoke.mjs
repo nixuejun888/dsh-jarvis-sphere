@@ -155,8 +155,23 @@ const userMessage = (text) => ({ type: 'user/message', data: { role: 'user', con
   const b = rows.find((r) => r.s === 'sessionBBBBB')
   const a = rows.find((r) => r.s === 'sessionAAAAA')
   check('each session keeps its own label', b?.u === 'B 的任务' && a?.u === 'A 的任务', [a?.u, b?.u])
-  check('subagent turns are not chronicled', rows.every((r) => !String(r.s).startsWith('sub')), rows.map((r) => r.s))
+  check('each session counts only its own tools', a?.tools === 1 && b?.tools === 1, [a?.tools, b?.tools])
+  check('today tools match the real calls', state(routes).chronicle?.todayTools === 2, state(routes).chronicle?.todayTools)
   check('today counts every recorded turn', state(routes).chronicle?.todayTurns === 2, state(routes).chronicle?.todayTurns)
+
+  // a delegated child's session carries origin=subagent in its header
+  const childDir = join(root, 'child')
+  const child = makeCtx()
+  apply(child.ctx, { nodeCount: 300, chronicleDir: childDir })
+  const childSession = { id: 'session-child1', header: { id: 'session-child1', origin: 'subagent' } }
+  emit(child.listeners, 'session/event', childSession, userMessage('子代理任务'))
+  emit(child.listeners, 'session/event', childSession, { type: 'tool/call', data: { callId: 'c1', name: 'read' } })
+  emit(child.listeners, 'session/event', childSession, { type: 'turn/end', data: { turn: 1 } })
+  emit(child.listeners, 'session/event', { id: 'session-root1', header: { id: 'session-root1' } }, userMessage('根任务'))
+  emit(child.listeners, 'session/event', { id: 'session-root1', header: { id: 'session-root1' } }, { type: 'turn/end', data: { turn: 1 } })
+  const childRows = readFileSync(join(childDir, 'chronicle.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  check('subagent turns are not chronicled', childRows.length === 1 && childRows[0].s === 'session-root', childRows.map((r) => r.s))
+  check('root turn after a child keeps its own label', childRows[0]?.u === '根任务', childRows[0]?.u)
 }
 
 // --- 6. control characters are stripped from labels and rendered text ---

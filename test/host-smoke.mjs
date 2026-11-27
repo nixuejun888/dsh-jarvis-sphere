@@ -19,7 +19,7 @@ const ctx = {
   agents: { list: () => [] },
 }
 
-const dispose = apply(ctx, { nodeCount: 300 })
+const dispose = apply(ctx, { nodeCount: 300, chronicle: false })
 
 function emit(name, ...args) {
   for (const fn of listeners.get(name) || []) fn(...args)

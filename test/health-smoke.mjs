@@ -98,7 +98,7 @@ function read(routes) {
     agents: [{ session: { id: 'a' } }],
     pressure: () => ({ pressureTokens: 400000, contextWindow: 1000000 }),
   })
-  apply(ctx, { nodeCount: 300 })
+  apply(ctx, { nodeCount: 300, chronicle: false })
   for (let i = 0; i < 300; i += 1) read(routes)
   check('context meter is called once per TTL window', calls.contextPressure === 1, calls.contextPressure)
   check('context ratio comes from the busiest session', read(routes).body?.health?.contextRatio === 0.4, read(routes).body?.health?.contextRatio)
@@ -107,11 +107,11 @@ function read(routes) {
 // --- 2. ratio semantics: clamped, and tokens without a window stay unknown ---
 {
   const over = makeCtx({ agents: [{ session: { id: 'a' } }], pressure: () => ({ pressureTokens: 2000000, contextWindow: 1000000 }) })
-  apply(over.ctx, { nodeCount: 300 })
+  apply(over.ctx, { nodeCount: 300, chronicle: false })
   check('context ratio is clamped to 1', read(over.routes).body?.health?.contextRatio === 1, read(over.routes).body?.health?.contextRatio)
 
   const noWindow = makeCtx({ agents: [{ session: { id: 'a' } }], pressure: () => ({ pressureTokens: 500 }) })
-  apply(noWindow.ctx, { nodeCount: 300 })
+  apply(noWindow.ctx, { nodeCount: 300, chronicle: false })
   const health = read(noWindow.routes).body?.health
   check('missing window reports no ratio', health?.contextRatio === 0 && health?.sessions === 1, [health?.contextRatio, health?.sessions])
 }
@@ -119,7 +119,7 @@ function read(routes) {
 // --- 3. error window: boundary, cost and cap ---
 {
   const { ctx, routes, listeners } = makeCtx()
-  apply(ctx, { nodeCount: 300 })
+  apply(ctx, { nodeCount: 300, chronicle: false })
   const realNow = Date.now
   let clock = realNow()
   Date.now = () => clock
@@ -147,12 +147,12 @@ function read(routes) {
 // --- 4. schedule service: rejection keeps the value, absence is not re-probed ---
 {
   const missing = makeCtx()
-  apply(missing.ctx, { nodeCount: 300 })
+  apply(missing.ctx, { nodeCount: 300, chronicle: false })
   for (let i = 0; i < 300; i += 1) read(missing.routes)
   check('missing schedule service is probed once', missing.calls.getSchedule === 1, missing.calls.getSchedule)
 
   const rejecting = makeCtx({ schedule: () => ({ items: [], total: 0 }), scheduleRejects: true })
-  apply(rejecting.ctx, { nodeCount: 300 })
+  apply(rejecting.ctx, { nodeCount: 300, chronicle: false })
   await new Promise((resolve) => setTimeout(resolve, 60))
   check('rejected schedule read keeps zero instead of throwing', read(rejecting.routes).body?.health?.schedulesActive === 0, read(rejecting.routes).body?.health?.schedulesActive)
 }
@@ -160,7 +160,7 @@ function read(routes) {
 // --- 4b. a schedule read that never settles must be retried after 10 s ---
 {
   const never = makeCtx({ schedule: () => ({ items: [], total: 0 }), scheduleNeverSettles: true })
-  apply(never.ctx, { nodeCount: 300 })
+  apply(never.ctx, { nodeCount: 300, chronicle: false })
   const realNow = Date.now
   let clock = realNow()
   Date.now = () => clock
@@ -183,7 +183,7 @@ function read(routes) {
 // --- 5. snapshot stays small even with a huge persona override ---
 {
   const { ctx, routes } = makeCtx()
-  apply(ctx, { nodeCount: 300, personaText: 'P'.repeat(4096) })
+  apply(ctx, { nodeCount: 300, personaText: 'P'.repeat(4096), chronicle: false })
   const text = read(routes).text
   check('persona override does not inflate the snapshot', text.length < 8000, text.length)
   check('persona text is not on the wire', !text.includes('PPPPP'), text.length)
@@ -194,7 +194,7 @@ function read(routes) {
   const hostile = makeCtx({ hostile: true })
   let threw = null
   try {
-    apply(hostile.ctx, { nodeCount: 300 })
+    apply(hostile.ctx, { nodeCount: 300, chronicle: false })
   } catch (error) {
     threw = error
   }
@@ -209,7 +209,7 @@ function read(routes) {
   const tdz = makeCtx({ emitBeforeEffect: true })
   let threw = null
   try {
-    apply(tdz.ctx, { nodeCount: 300 })
+    apply(tdz.ctx, { nodeCount: 300, chronicle: false })
   } catch (error) {
     threw = error
   }
@@ -220,7 +220,7 @@ function read(routes) {
 // --- 8. persona: file source, revision tag, overrides and fallback ---
 {
   const fromFile = makeCtx()
-  apply(fromFile.ctx, { nodeCount: 300 })
+  apply(fromFile.ctx, { nodeCount: 300, chronicle: false })
   const personaFile = read(fromFile.routes).body?.persona
   check('persona loads from the package file', personaFile?.source === 'file', personaFile?.source)
   check('persona revision tag is a short hex', /^[0-9a-f]{8}$/u.test(String(personaFile?.version || '')), personaFile?.version)

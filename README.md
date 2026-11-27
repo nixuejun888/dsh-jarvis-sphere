@@ -100,7 +100,7 @@ node test/keeper-smoke.mjs  # 25/25
 每个回合结束写一行 JSON 到 `~/.dsh/jarvis-sphere/chronicle.jsonl`（可用 `chronicleDir` 改）：
 
 - 只记 `{时间, 日期, 会话短 id, 用户那句话的前 80 字, 本轮工具数}`，**不记助手输出**；
-- **按会话隔离**：标签与工具基线挂在各自的 pending 上，两个会话并行时不会串台；
+- **按会话隔离**：标签与工具基线挂在各自的 pending 上，工具调用也按会话累加（`sessionTools`），两个会话并行时既不串标签、也不互涨工具数；
 - **子代理回合不计入**（`session.header.origin === 'subagent'` 跳过）：「今天第几件事」指人发起的回合；
 - **注入块不当成你说的话**：`<system-reminder>`、`Time sampled…`、`[MNEMON]` 开头的块被跳过；控制字符与换行压平，按码点截断不劈代理对；
 - 文件超过 512 KB 时**按字节**从尾部回收到 ≤80% 预算（且 ≤2000 行）；临时文件名带 pid，rename 失败会清掉，不留半截或 `.tmp`；
@@ -202,7 +202,7 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
-node test/chronicle-smoke.mjs  # 26/26  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
+node test/chronicle-smoke.mjs  # 29/29  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

@@ -537,6 +537,8 @@ export function apply(ctx, config) {
    * that produced them, never to whichever session ends a turn first.
    */
   const chronicle = { pending: new Map(), days: new Map() }
+  /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
+  const sessionTools = new Map()
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -576,7 +578,7 @@ export function apply(ctx, config) {
     if (origin === 'subagent') return
     const now = Date.now()
     const day = dayKey(now)
-    const tools = pending ? Math.max(0, counters.tools - pending.toolsAt) : 0
+    const tools = pending ? Math.max(0, (sessionTools.get(key) || 0) - pending.toolsAt) : 0
     const record = {
       t: new Date(now).toISOString(),
       d: day,
@@ -662,7 +664,7 @@ export function apply(ctx, config) {
     if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX)
   }
 
-  function onToolCall(data) {
+  function onToolCall(data, sessionId) {
     const now = Date.now()
     touch()
     const name = toolNameOf(data) || 'tool'
@@ -670,6 +672,8 @@ export function apply(ctx, config) {
     toolAt.push(now)
     if (toolAt.length > WINDOW_MAX) toolAt.splice(0, toolAt.length - WINDOW_MAX)
     counters.tools += 1
+    const toolKey = String(sessionId || '')
+    sessionTools.set(toolKey, (sessionTools.get(toolKey) || 0) + 1)
     lastToolName = name
     lastToolAt = now
     activeTools.set(id, { name, at: now })
@@ -690,7 +694,7 @@ export function apply(ctx, config) {
     const type = event && event.type
     if (typeof type !== 'string' || !type) return
     const data = event && event.data && typeof event.data === 'object' ? event.data : {}
-    if (type === 'tool/call') onToolCall(data)
+    if (type === 'tool/call') onToolCall(data, sessionId)
     else if (type === 'tool/result') onToolResult(data)
     else if (type === 'turn/end') {
       counters.turns += 1
@@ -702,7 +706,8 @@ export function apply(ctx, config) {
     } else if (type === 'user/message') {
       counters.userMessages += 1
       note('user', '')
-      chronicle.pending.set(String(sessionId || ''), { label: messageTextOf(data), toolsAt: counters.tools })
+      const pendingKey = String(sessionId || '')
+      chronicle.pending.set(pendingKey, { label: messageTextOf(data), toolsAt: sessionTools.get(pendingKey) || 0 })
     } else if (type === 'turn/error' || type === 'error') {
       counters.errors += 1
       note('error', '')
@@ -781,7 +786,11 @@ export function apply(ctx, config) {
 
   on('agent/disposed', (payload) => {
     const id = sessionIdOf(payload && payload.agent)
-    if (id) statuses.delete(id)
+    if (id) {
+      statuses.delete(id)
+      sessionTools.delete(id)
+      chronicle.pending.delete(id)
+    }
   })
 
   on('agent/assistant-stream', () => {
@@ -1174,7 +1183,7 @@ export function apply(ctx, config) {
           if (recent.length) {
             lines.push('最近 ' + recent.length + ' 轮：')
             for (const record of recent) {
-              const label = clipLabel(record.u || '').slice(0, 60)
+              const label = Array.from(clipLabel(record.u || '')).slice(0, 60).join('')
               lines.push('  ' + (localStamp(record.t) || '-') + '  ' + (label || '(无标签)'))
             }
           }

@@ -73,7 +73,7 @@ function check(label, ok, extra) {
 
 // 1. First instance registers the primary route and serves its own config.
 const a = makeCtx()
-apply(a, { nodeCount: 111 })
+apply(a, { nodeCount: 111, chronicle: false })
 let state = getState(a, PRIMARY)
 check('A registers the primary route', state.status === 200, state.status)
 check('A serves its config', state.body?.cfg?.nodeCount === 111, state.body?.cfg?.nodeCount)
@@ -83,7 +83,7 @@ check('A advertises build 3', state.body?.build === 3, state.body?.build)
 //    instead of hitting "duplicate exact route".
 unload(a)
 check('disable removes the route', a.routes.size === 0, a.routes.size)
-apply(a, { nodeCount: 112 })
+apply(a, { nodeCount: 112, chronicle: false })
 state = getState(a, PRIMARY)
 check('re-enable re-registers', state.status === 200, state.status)
 check('re-enable serves fresh config', state.body?.cfg?.nodeCount === 112, state.body?.cfg?.nodeCount)
@@ -104,7 +104,7 @@ frozenRoutes.set(PRIMARY, {
 const b = makeCtx(frozenRoutes)
 let threw = null
 try {
-  apply(b, { nodeCount: 222 })
+  apply(b, { nodeCount: 222, chronicle: false })
 } catch (error) {
   threw = error
 }
@@ -126,7 +126,7 @@ let postCode = 0
 route.handler({ method: 'POST' }, { statusCode: 0, setHeader() {}, end() { postCode = this.statusCode } })
 check('frozen handler keeps its own guard', postCode === 200, postCode)
 let alternatePost = 0
-apply(b, { nodeCount: 333 })
+apply(b, { nodeCount: 333, chronicle: false })
 b.routes.get(ALTERNATE).handler({ method: 'POST' }, { statusCode: 0, setHeader() {}, end() { alternatePost = this.statusCode } })
 check('POST -> 405', alternatePost === 405, alternatePost)
 

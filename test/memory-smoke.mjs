@@ -139,7 +139,7 @@ rmSync(bigDir, { recursive: true, force: true })
   check('explicit memoryDirs wins', __test.pickMemoryRoot([staleDir, liveDir], [staleDir]).root === staleDir, __test.pickMemoryRoot([staleDir, liveDir], [staleDir]).root === staleDir)
 
   const { ctx, routes } = makeCtx(liveDir)
-  apply(ctx, { memoryDirs: [liveDir] })
+  apply(ctx, { memoryDirs: [liveDir], chronicle: false })
   check('explicit root is the one projected', readState(routes).body?.memory?.total === 14, readState(routes).body?.memory?.total)
   rmSync(staleDir, { recursive: true, force: true })
   rmSync(liveDir, { recursive: true, force: true })
@@ -150,7 +150,7 @@ const candidates = [process.env.DSH_MNEMON_DATA_DIR, 'D:\\AI\\记忆数据', joi
 const realDir = candidates.find((dir) => existsSync(join(dir, 'runtime', 'memories.json')))
 if (realDir) {
   const { ctx, routes } = makeCtx(realDir)
-  apply(ctx, { nodeCount: 460 })
+  apply(ctx, { nodeCount: 460, chronicle: false })
   const state = readState(routes)
   const memory = state.body?.memory
   check('real store: projection ok', memory?.ok === true, memory?.ok)
@@ -202,7 +202,7 @@ if (realDir) {
     agents: { list: () => [] },
     logger: { warn() {} },
   }
-  apply(ctx2, { nodeCount: 300 })
+  apply(ctx2, { nodeCount: 300, chronicle: false })
   const read = () => {
     const route = routes2.get('exact /dsh-jarvis/state')
     let payload = ''
