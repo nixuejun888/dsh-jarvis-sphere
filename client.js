@@ -23,6 +23,10 @@ window.__ModuleLoader__.load({
       '.jvs-root{position:absolute;inset:0;pointer-events:none;overflow:hidden;contain:strict;}',
       '.jvs-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}',
       '.jvs-probe{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}',
+      /* 沉浸模式：把页面底色压暗、让面板半透明，球成为主视觉 */
+      'html.jvs-immersive body{background:#05070c !important;}',
+      'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
+      'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
     ].join('')
 
     /* 调色板：深色主题发光，浅色主题换深青配合 multiply */
@@ -236,6 +240,8 @@ window.__ModuleLoader__.load({
       this.memorySlotsCache = null
       this.memoryBornAt = 0
 
+      this.immersive = false
+      this.onKey = null
       this.onResize = this.onResize.bind(this)
       this.frame = this.frame.bind(this)
 
@@ -247,6 +253,7 @@ window.__ModuleLoader__.load({
         window.addEventListener('resize', this.onResize)
       }
       this.onResize()
+      this.bindKeys()
       this.rebuild(this.cfg.nodeCount)
       this.detectTheme()
 
@@ -262,6 +269,7 @@ window.__ModuleLoader__.load({
       if (this.pollTimer) window.clearTimeout(this.pollTimer)
       if (this.resizeObserver) this.resizeObserver.disconnect()
       else window.removeEventListener('resize', this.onResize)
+      if (this.onKey) window.removeEventListener('keydown', this.onKey, true)
       if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas)
       if (this.probe && this.probe.parentNode) this.probe.parentNode.removeChild(this.probe)
     }
@@ -275,6 +283,58 @@ window.__ModuleLoader__.load({
       this.px = null
     }
 
+    /** 沉浸模式：球占满视口，把对话面板改成半透明，一键可还原。 */
+    SphereEngine.prototype.setImmersive = function (on) {
+      this.immersive = !!on
+      try {
+        document.documentElement.classList.toggle('jvs-immersive', this.immersive)
+        window.localStorage.setItem('jarvis:immersive', this.immersive ? '1' : '0')
+      } catch (err) {
+        void err
+      }
+      if (this.immersive) this.tagPanels()
+      this.onResize()
+    }
+
+    /** 从输入框往上找几层容器，标成半透明面板（不依赖类名）。 */
+    SphereEngine.prototype.tagPanels = function () {
+      var doc = document
+      var marked = doc.querySelectorAll('[data-jvs-panel]')
+      for (var i = 0; i < marked.length; i += 1) marked[i].removeAttribute('data-jvs-panel')
+      var seed = doc.querySelector('textarea') || doc.querySelector('[role="main"]') || doc.querySelector('main')
+      if (!seed) return
+      var node = seed
+      for (var depth = 0; depth < 5 && node && node !== doc.body; depth += 1) {
+        try {
+          node.setAttribute('data-jvs-panel', '1')
+        } catch (err) {
+          void err
+        }
+        node = node.parentElement
+      }
+      var main = doc.querySelector('[role="main"]')
+      if (main) main.setAttribute('data-jvs-panel', '1')
+    }
+
+    /** Ctrl+Shift+J 切换沉浸模式；状态存 localStorage，刷新后保持。 */
+    SphereEngine.prototype.bindKeys = function () {
+      if (this.onKey) return
+      var self = this
+      this.onKey = function (event) {
+        if (!event || !event.ctrlKey || !event.shiftKey) return
+        if (event.key !== 'j' && event.key !== 'J') return
+        event.preventDefault()
+        self.setImmersive(!self.immersive)
+      }
+      window.addEventListener('keydown', this.onKey, true)
+      var saved = '0'
+      try {
+        saved = window.localStorage.getItem('jarvis:immersive') || '0'
+      } catch (err) {
+        saved = '0'
+      }
+      if (saved === '1') this.setImmersive(true)
+    }
     SphereEngine.prototype.onResize = function () {
       var rect = this.host.getBoundingClientRect()
       var w = Math.max(1, Math.round(rect.width || window.innerWidth))
@@ -610,7 +670,7 @@ window.__ModuleLoader__.load({
 
       var cx = w / 2 + cfg.offsetX
       var cy = hgt / 2 + cfg.offsetY
-      var R = Math.min(w, hgt) * 0.315
+      var R = Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
       var f = 3.15
 
       var cosY = Math.cos(this.yaw)
@@ -1257,7 +1317,7 @@ window.__ModuleLoader__.load({
       ctx.save()
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      var y = cy + R * 1.03 + 8
+      var y = this.immersive ? 92 : cy + R * 1.03 + 8
       ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
       var worst = Math.max(pressure, contextRatio)
       var headTint = errors > 0
@@ -1268,10 +1328,15 @@ window.__ModuleLoader__.load({
       var headAlpha = errors > 0 ? (this.dark ? 0.55 : 0.6) : (this.dark ? 0.26 : 0.42)
       ctx.fillStyle = rgba(headTint, headAlpha * alpha)
       ctx.fillText(head, cx, y)
+      if (this.immersive) {
+        ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+        ctx.fillStyle = rgba(base, (this.dark ? 0.22 : 0.4) * alpha)
+        ctx.fillText('沉浸模式 · Ctrl+Shift+J 还原', cx, y + 16)
+      }
       if (detail) {
         ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
         ctx.fillStyle = rgba(base, (this.dark ? 0.18 : 0.36) * alpha)
-        ctx.fillText(hudClip(String(detail), 46), cx, y + 13)
+        ctx.fillText(hudClip(String(detail), 46), cx, y + (this.immersive ? 31 : 13))
       }
       ctx.restore()
     }

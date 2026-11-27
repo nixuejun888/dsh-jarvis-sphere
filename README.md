@@ -180,6 +180,16 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 沉浸模式（档 1）：球当主界面
+
+按 `Ctrl+Shift+J` 切换。开启后：
+
+- 球放大到 `min(视口) × 0.46`（正常 0.315），铺满整屏；
+- 页面底色压到近黑，对话框/输入区/侧栏变成半透明（`backdrop-filter: blur(3px)`），文字仍可读；
+- HUD 移到顶部（正常模式在球下方），下一行是工具详情，再下一行提示 `沉浸模式 · Ctrl+Shift+J 还原`；
+- 状态写进 `localStorage`，刷新后保持；再按一次切回原界面。
+
+实现边界：只改页面 CSS 与自己的 canvas，不碰 `app.asar`；面板不靠类名，而是从输入框往上找 5 层容器标记 `data-jvs-panel`，所以 DSH 前端小改版也能用。停用插件即完全恢复。
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
