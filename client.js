@@ -272,6 +272,8 @@ window.__ModuleLoader__.load({
       this.memoryRef = null
       this.memorySlotsCache = null
       this.memoryBornAt = 0
+      this.memoryPrevCounts = null
+      this.flyIns = []
 
       this.immersive = false
       this.onKey = null
@@ -1143,7 +1145,7 @@ window.__ModuleLoader__.load({
       this.diagnostics = data.diagnostics && typeof data.diagnostics === 'object' ? data.diagnostics : null
       this.alerts = data.alerts && typeof data.alerts === 'object' ? data.alerts : null
       this.adoptPulses(Array.isArray(data.pulses) ? data.pulses : [])
-      var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
+      if (nextMemory && Array.isArray(nextMemory.slots)) this.planMemoryFlyIn(nextMemory)
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
         this.memoryBornAt = this.time
@@ -1190,6 +1192,27 @@ window.__ModuleLoader__.load({
       this.memoryRef = memory
       this.memorySlotsCache = out
       return out
+    }
+
+    /** Compare the new memory slots with the previous frame and queue fly-ins. */
+    SphereEngine.prototype.planMemoryFlyIn = function (memory) {
+      var slots = this.memorySlots(memory)
+      var list = Array.isArray(memory.slots) ? memory.slots : []
+      var next = {}
+      for (var i = 0; i < list.length; i += 1) {
+        var entry = list[i]
+        if (!entry) continue
+        var key = String(entry.s)
+        var count = Math.max(1, Number(entry.n) || 1)
+        next[key] = count
+        if (!this.memoryPrevCounts) continue
+        var before = Number(this.memoryPrevCounts[key]) || 0
+        if (count > before && slots[i]) {
+          this.flyIns.push({ idx: slots[i].idx, t: slots[i].t, at: this.time, n: count - before })
+        }
+      }
+      this.memoryPrevCounts = next
+      if (this.flyIns.length > 12) this.flyIns = this.flyIns.slice(-12)
     }
 
     /** 一次工具调用：冲击波 + 越球数据弧 + 火花 */
@@ -1555,6 +1578,45 @@ window.__ModuleLoader__.load({
           ctx.arc(mx, my, mSize * (1.75 + breath * 0.35), 0, TAU)
           ctx.stroke()
         }
+      }
+
+      // ---- 新记忆飞入：一颗粒子从球心飞向它落脚的槽位 ----
+      if (this.flyIns.length) {
+        var keepFly = []
+        for (var fi = 0; fi < this.flyIns.length; fi += 1) {
+          var fly = this.flyIns[fi]
+          var flyAge = this.time - fly.at
+          if (flyAge > 1.4) continue
+          keepFly.push(fly)
+          var flyP = Math.min(1, Math.max(0, flyAge / 0.75))
+          var ease = 1 - Math.pow(1 - flyP, 3)
+          var slotX = px[fly.idx]
+          var slotY = py[fly.idx]
+          if (!isFinite(slotX) || !isFinite(slotY)) continue
+          var flyTint = fly.t === 'user'
+            ? (pal.amber || accent)
+            : fly.t === 'space'
+              ? (pal.violet || base)
+              : mix(pal.cyan || base, hi, 0.6)
+          for (var tr = 0; tr < 4; tr += 1) {
+            var tp = Math.max(0, ease - tr * 0.055)
+            var ax = cx + (slotX - cx) * tp
+            var ay = cy + (slotY - cy) * tp
+            var ta = (1 - flyP) * 0.55 * alphaScale * (1 - tr * 0.2)
+            ctx.fillStyle = rgba(flyTint, Math.max(0, ta))
+            ctx.beginPath()
+            ctx.arc(ax, ay, 2.0 - tr * 0.3, 0, TAU)
+            ctx.fill()
+          }
+          if (flyP >= 1) {
+            var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
+            ctx.fillStyle = rgba(flyTint, 0.28 * sparkLeft * alphaScale)
+            ctx.beginPath()
+            ctx.arc(slotX, slotY, 3 + 7 * (1 - sparkLeft), 0, TAU)
+            ctx.fill()
+          }
+        }
+        this.flyIns = keepFly
       }
 
       // ---- 文档刻度环：文档归档再多，也只是环上的刻度更密更亮 ----
@@ -2130,6 +2192,5 @@ window.__ModuleLoader__.load({
     }
   },
 })
-
 
 
