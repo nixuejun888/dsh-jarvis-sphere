@@ -22,6 +22,8 @@ import { applyPlan, appendAudit, parseEntries, planOperation, readProjection } f
 const DEFAULTS = {
   enabled: true,
   nodeCount: 460,
+  /** Gauge style: glow (soft halo + core light) or arc (the previous arcs). */
+  gauge: 'glow',
   intensity: 1,
   opacity: 1,
   showHud: true,
@@ -1073,6 +1075,7 @@ function parseChronicleLine(line) {
         color: cfg.color,
         offsetX: cfg.offsetX,
         offsetY: cfg.offsetY,
+        gauge: cfg.gauge,
       },
     }
   }

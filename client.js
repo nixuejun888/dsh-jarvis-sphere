@@ -221,7 +221,7 @@ window.__ModuleLoader__.load({
       }
       this.cfg = {
         enabled: true, nodeCount: 460, intensity: 1, opacity: 1,
-        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0,
+        showHud: true, glow: true, color: 'cyan', offsetX: 0, offsetY: 0, gauge: 'glow',
       }
       this.lastTools = -1
       this.dark = true
@@ -322,6 +322,7 @@ window.__ModuleLoader__.load({
       if (typeof cfg.intensity === 'number') this.cfg.intensity = cfg.intensity
       if (typeof cfg.opacity === 'number') this.cfg.opacity = cfg.opacity
       if (typeof cfg.showHud === 'boolean') this.cfg.showHud = cfg.showHud
+      if (typeof cfg.gauge === 'string') this.cfg.gauge = cfg.gauge
       if (typeof cfg.glow === 'boolean') this.cfg.glow = cfg.glow
       if (typeof cfg.color === 'string') this.cfg.color = cfg.color
       if (typeof cfg.offsetX === 'number') this.cfg.offsetX = cfg.offsetX
@@ -1037,8 +1038,96 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 球体底部的环形数据表：随模型输出速率变长变亮 */
+    /** Blend two palette colours; t is clamped to 0..1. */
+    SphereEngine.prototype.mixRgb = function (a, b, t) {
+      var k = t < 0 ? 0 : t > 1 ? 1 : t
+      return {
+        r: Math.round(a.r + (b.r - a.r) * k),
+        g: Math.round(a.g + (b.g - a.g) * k),
+        b: Math.round(a.b + (b.b - a.b) * k),
+      }
+    }
+
+    /**
+     * Soft pressure rendering: no outside arcs. The memory ratio becomes a halo
+     * around the sphere, the context ratio becomes the colour of the light the
+     * core gives off (cool blue → violet → warning red), and the stream rate
+     * already drives the pulse. White is never forced: every tint comes from the
+     * theme palette.
+     */
+    SphereEngine.prototype.drawGaugeGlow = function (ctx, cx, cy, R, base, accent, hi, alpha) {
+      var health = this.health
+      if (!health) return
+      var pal = this.palette || {}
+      var clamp = function (v) {
+        var n = Number(v) || 0
+        return n < 0 ? 0 : n > 1 ? 1 : n
+      }
+      var memory = clamp(health.memoryRatio)
+      var pressure = clamp(health.contextRatio)
+      var saved = ctx.globalCompositeOperation
+      /* a slow breath so a static reading still feels alive; driven by the same
+         clock the animation loop uses */
+      var clock = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+      var breath = 0.94 + Math.sin(clock / 2600) * 0.06
+
+      /* Memory fill: a rim light hugging the sphere, no visible band. Four
+         stops keep the falloff soft at both ends instead of cutting a ring. */
+      if (memory > 0.01) {
+        var warm = memory >= 0.85
+        var rim = warm ? accent : (pal.violet || base)
+        var peak = (warm ? 0.44 : 0.26) * (0.25 + memory * 0.75) * alpha * breath
+        var rimOuter = R * 1.22
+        var grad = ctx.createRadialGradient(cx, cy, R * 0.80, cx, cy, rimOuter)
+        grad.addColorStop(0, rgba(rim, 0))
+        grad.addColorStop(0.86, rgba(rim, peak * 0.05))
+        grad.addColorStop(0.965, rgba(rim, peak * 0.75))
+        grad.addColorStop(1, rgba(rim, 0))
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.fillStyle = grad
+        ctx.beginPath()
+        ctx.arc(cx, cy, rimOuter, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
+
+      /* Context pressure: the light the core gives off. Cool violet under 60%,
+         drifting to the warning colour above it; a soft bloom, no ring. */
+      if (pressure > 0.01) {
+        var cool = pal.violet || base
+        var mid = this.mixRgb(cool, accent, 0.55)
+        var hotCol = this.alert || accent
+        var mood = pressure < 0.6
+          ? this.mixRgb(cool, mid, pressure / 0.6)
+          : this.mixRgb(mid, hotCol, (pressure - 0.6) / 0.4)
+        var coreR = R * 0.95
+        var core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR)
+        core.addColorStop(0, rgba(mood, (0.06 + pressure * 0.20) * alpha * breath))
+        core.addColorStop(0.35, rgba(mood, (0.03 + pressure * 0.10) * alpha))
+        core.addColorStop(0.72, rgba(mood, (0.01 + pressure * 0.03) * alpha))
+        core.addColorStop(1, rgba(mood, 0))
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.fillStyle = core
+        ctx.beginPath()
+        ctx.arc(cx, cy, coreR, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
+      ctx.globalCompositeOperation = saved
+    }
+    /** Pick the gauge style; `arc` keeps the previous look for comparison. */
     SphereEngine.prototype.drawGauge = function (ctx, cx, cy, R, base, accent, hi, alpha) {
+      var style = this.cfg && this.cfg.gauge === 'arc' ? 'arc' : 'glow'
+      if (style === 'arc') {
+        this.drawGaugeArc(ctx, cx, cy, R, base, accent, hi, alpha)
+        return
+      }
+      this.drawGaugeGlow(ctx, cx, cy, R, base, accent, hi, alpha)
+    }
+    /** 球体底部的环形数据表：随模型输出速率变长变亮 */
+    SphereEngine.prototype.drawGaugeArc = function (ctx, cx, cy, R, base, accent, hi, alpha) {
       var s = this.state
       var rate = Math.min(1, s.streamRate / 16)
       var span = Math.PI * 0.62

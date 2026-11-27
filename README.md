@@ -76,13 +76,13 @@ node test/keeper-smoke.mjs  # 25/25
 - 每周自检除了记忆库，也会复盘「这周有几处偏离人格」，偏离了就改文件、升版本。
 ## 仪表：记忆 / 上下文 / 待办 / 错误
 
-球体不只会动，它报健康。HUD 首行是
+仪表不再画外挂弧线：`gauge: 'glow'`（默认）把数值变成球体自身的光——外缘一圈随记忆填充变亮的柔光、球心透出随上下文压力变色的光核，外加约 2.6 秒的呼吸节律；想回到旧样式可设 `gauge: 'arc'`。球体不只会动，它报健康。HUD 首行是
 `JARVIS · ACTIVE · 14 MEM 77% · CTX 68% · 7 TODAY · 2 TASKS · 4 TOOLS`，告警（`!N ERR`）排在最前。
 
 | 通道 | 数据源 | 渲染 |
 | --- | --- | --- |
-| 记忆容量 | `MEMORY.md 已用 / dsh-mnemon 真实上限`（一次 stat，5 秒缓存） | 球体**上方**一圈琥珀弧，≥85% 转琥珀并染色 HUD |
-| 上下文压力 | `tokenMeter.contextPressure(session)`，取**最忙会话**的占用率（2 秒缓存） | 再外一圈紫弧，≥85% 转红；比例 clamp 到 1 |
+| 记忆容量 | `MEMORY.md 已用 / dsh-mnemon 真实上限`（一次 stat，5 秒缓存） | 球体**外缘的柔光**（越满越亮、范围越大），≥85% 转琥珀并染色 HUD |
+| 上下文压力 | `tokenMeter.contextPressure(session)`，取**最忙会话**的占用率（2 秒缓存） | 球**心透出的光色**：紫 → 琥珀 → 红，≥85% 明显发红；比例 clamp 到 1 |
 | 待办 | `schedule.list({active:true})`（30 秒缓存，带 10 秒 inflight 超时） | `N TASKS`；没工具在跑时第二行显示 `NEXT <多久后>` |
 | 近期错误 | `agent/error` 时间戳（15 分钟窗口，4096 上限） | `!N ERR` 并把整行染成告警色（主题相关） |
 
