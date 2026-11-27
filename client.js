@@ -1179,6 +1179,31 @@ window.__ModuleLoader__.load({
       ctx.restore()
     }
 
+    /** Display width of a HUD string, counting CJK as two cells. */
+    function hudCells(text) {
+      var s = String(text || '')
+      var width = 0
+      for (var i = 0; i < s.length; i += 1) {
+        var code = s.charCodeAt(i)
+        width += code >= 0x2e80 ? 2 : 1
+      }
+      return width
+    }
+
+    /** Clip a HUD string to a cell budget without splitting a pair. */
+    function hudClip(text, budget) {
+      var s = String(text || '')
+      var width = 0
+      var out = ''
+      for (var i = 0; i < s.length; i += 1) {
+        var code = s.charCodeAt(i)
+        var add = code >= 0x2e80 ? 2 : 1
+        if (width + add > budget) break
+        out += s.charAt(i)
+        width += add
+      }
+      return out
+    }
     SphereEngine.prototype.drawHud = function (ctx, cx, cy, R, base, accent, alpha) {
       var s = this.state
       var tools = Number(s.counters.tools) || 0
@@ -1192,41 +1217,41 @@ window.__ModuleLoader__.load({
       var head = this.persona && this.persona.active ? 'JARVIS' : ''
       var headParts = []
       if (head) headParts.push(head)
-      headParts.push(s.running ? 'ACTIVE' : 'STANDBY')
+      headParts.push(s.running ? '运行中' : '待机')
       /* 告警排在最前：窗口窄时丢末尾的 TASKS/TOOLS，绝不丢错误提示 */
-      if (errors > 0) headParts.push('!' + errors + ' ERR')
+      if (errors > 0) headParts.push('!' + errors + ' 错误')
       var diagStatus = this.diagnostics ? String(this.diagnostics.status || '') : ''
-      if (diagStatus === 'fail') headParts.push('DOCTOR FAIL')
-      else if (diagStatus === 'degraded') headParts.push('DOCTOR')
+      if (diagStatus === 'fail') headParts.push('自检异常')
+      else if (diagStatus === 'degraded') headParts.push('自检')
       var alertCount = this.alerts ? Number(this.alerts.count) || 0 : 0
-      if (alertCount > 0) headParts.push(alertCount + ' ALERT')
+      if (alertCount > 0) headParts.push(alertCount + ' 提醒')
       if (memory && memory.total > 0) {
-        headParts.push(memory.total + ' MEM' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
+        headParts.push(memory.total + ' 记忆' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
       }
-      if (contextRatio > 0) headParts.push('CTX ' + Math.round(contextRatio * 100) + '%')
+      if (contextRatio > 0) headParts.push('上下文 ' + Math.round(contextRatio * 100) + '%')
       var todayTurns = this.chronicle ? Number(this.chronicle.todayTurns) || 0 : 0
-      if (todayTurns > 0) headParts.push(todayTurns + ' TODAY')
-      if (schedules > 0) headParts.push(schedules + ' TASKS')
-      if (tools > 0) headParts.push(tools + ' TOOLS')
+      if (todayTurns > 0) headParts.push('今日 ' + todayTurns)
+      if (schedules > 0) headParts.push(schedules + ' 任务')
+      if (tools > 0) headParts.push(tools + ' 工具')
       head = ''
       for (var hp = 0; hp < headParts.length; hp++) {
-        var joined = head ? head + '  ·  ' + headParts[hp] : headParts[hp]
-        if (head && joined.length > 96) break
+        var joined = head ? head + ' · ' + headParts[hp] : headParts[hp]
+        if (head && hudCells(joined) > 96) break
         head = joined
       }
       var detail = s.activeTools.length ? String(s.activeTools[s.activeTools.length - 1]) : ''
       if (!detail && nextDue > 0) {
         var minsLeft = Math.max(0, Math.round((nextDue - Date.now()) / 60000))
-        detail = minsLeft < 60 ? 'NEXT ' + minsLeft + ' MIN' : minsLeft < 1440 ? 'NEXT ' + Math.round(minsLeft / 60) + ' H' : 'NEXT ' + Math.round(minsLeft / 1440) + ' D'
+        detail = minsLeft < 60 ? '下次 ' + minsLeft + ' 分钟' : minsLeft < 1440 ? '下次 ' + Math.round(minsLeft / 60) + ' 小时' : '下次 ' + Math.round(minsLeft / 1440) + ' 天'
       }
       if (!detail && memory && memory.ok) {
         /* 没有工具在跑时，底下一行报记忆库存：用户画像 / 工作记忆 / 空间 / 文档 */
         var parts = []
-        if (memory.user) parts.push(memory.user + ' USER')
-        if (memory.memory) parts.push(memory.memory + ' WORKING')
-        if (memory.spaces) parts.push(memory.spaces + ' SPACES')
-        if (memory.documents) parts.push(memory.documents + ' DOCS')
-        detail = parts.length ? 'MEMORY  ' + parts.join('  ·  ') : ''
+        if (memory.user) parts.push(memory.user + ' 画像')
+        if (memory.memory) parts.push(memory.memory + ' 工作')
+        if (memory.spaces) parts.push(memory.spaces + ' 空间')
+        if (memory.documents) parts.push(memory.documents + ' 文档')
+        detail = parts.length ? '记忆 ' + parts.join(' · ') : ''
       }
 
       ctx.save()
@@ -1246,7 +1271,7 @@ window.__ModuleLoader__.load({
       if (detail) {
         ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
         ctx.fillStyle = rgba(base, (this.dark ? 0.18 : 0.36) * alpha)
-        ctx.fillText(String(detail).toUpperCase().slice(0, 30), cx, y + 13)
+        ctx.fillText(hudClip(String(detail), 46), cx, y + 13)
       }
       ctx.restore()
     }
