@@ -27,6 +27,8 @@ window.__ModuleLoader__.load({
       'html.jvs-immersive body{background:#05070c !important;}',
       'html.jvs-stage body{background:#05070c !important;}',
       'html.jvs-stage .jvs-hud{pointer-events:none;}',
+      'html.jvs-stage [data-jvs-chat]{position:fixed !important;top:60px !important;right:16px !important;bottom:16px !important;left:auto !important;width:min(46vw,760px) !important;height:auto !important;z-index:40 !important;border-radius:16px;border:1px solid rgba(120,200,255,0.22);background:rgba(6,9,16,0.88);box-shadow:0 24px 60px rgba(0,0,0,0.55);backdrop-filter:blur(10px);overflow-y:auto !important;}',
+      'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
       '.jvs-panel{position:absolute;z-index:2147483000;min-width:260px;max-width:380px;max-height:60vh;overflow:auto;pointer-events:auto;padding:10px 12px;border-radius:10px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.92);color:#cfe8ff;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 10px 30px rgba(0,0,0,0.45);backdrop-filter:blur(6px);}'.replace('}','}'),
@@ -599,49 +601,94 @@ window.__ModuleLoader__.load({
       this.onResize()
     }
 
-    SphereEngine.prototype.liftChatCard = function () {
-      if (this.lifted) return
-      var picked = this.chatColumn()
-      if (!picked) return
-      var node = picked.node
-      this.lifted = {
-        node: node,
-        style: node.getAttribute('style') || '',
-        width: picked.width,
+    /** Pick the conversation column: a tall, wide ancestor with a tall sibling. */
+    SphereEngine.prototype.findChatRegion = function () {
+      var w = window.innerWidth
+      var hgt = window.innerHeight
+      var node = document.querySelector('textarea')
+      var fallback = null
+      var chain = []
+      while (node && node !== document.body) {
+        var rect = node.getBoundingClientRect()
+        var tag = String(node.tagName || '').toLowerCase()
+        var cls = typeof node.className === 'string' ? node.className.split(/\s+/)[0] : ''
+        if (chain.length < 8) chain.push(tag + (cls ? '.' + cls : '') + ' ' + Math.round(rect.width) + 'x' + Math.round(rect.height))
+        if (rect.width > w * 0.45 && rect.height > hgt * 0.5) {
+          var parent = node.parentElement
+          var side = false
+          if (parent) {
+            for (var i = 0; i < parent.children.length; i += 1) {
+              var child = parent.children[i]
+              if (child === node) continue
+              var cr = child.getBoundingClientRect()
+              if (cr.width > 80 && cr.width < w * 0.45 && cr.height > hgt * 0.4) { side = true; break }
+            }
+          }
+          if (side) return { node: node, chain: chain, reason: 'tall sibling' }
+          if (node.parentElement !== document.body) fallback = { node: node, chain: chain, reason: 'widest tall ancestor' }
+        }
+        node = node.parentElement
       }
-      node.setAttribute('data-jvs-lifted', '1')
-      node.setAttribute('data-jvs-panel', '1')
-      var style = node.style
-      style.position = 'fixed'
-      style.top = '60px'
-      style.right = '16px'
-      style.bottom = '16px'
-      style.left = 'auto'
-      style.width = 'min(46vw, 760px)'
-      style.height = 'auto'
-      style.maxHeight = 'none'
-      style.zIndex = '40'
-      style.borderRadius = '16px'
-      style.border = '1px solid rgba(120,200,255,0.22)'
-      style.background = 'rgba(6,9,16,0.86)'
-      style.boxShadow = '0 24px 60px rgba(0,0,0,0.55)'
-      style.backdropFilter = 'blur(10px)'
-      style.overflowY = 'auto'
-      style.transition = 'none'
+      return fallback
     }
 
-    SphereEngine.prototype.restoreChatCard = function () {
-      if (!this.lifted) return
+    /** Report what the page measured, so the host can show it in the doctor. */
+    SphereEngine.prototype.reportLayout = function (pick, mode, chain) {
       try {
-        this.lifted.node.removeAttribute('data-jvs-lifted')
-        this.lifted.node.setAttribute('style', this.lifted.style)
+        var body = JSON.stringify({
+          pick: pick || '',
+          mode: mode || '',
+          size: (this.w || window.innerWidth) + 'x' + (this.h || window.innerHeight),
+          chain: (chain || []).join('|'),
+        })
+        fetch('/dsh-jarvis/detail', { method: 'POST', headers: { 'content-type': 'application/json' }, body: body, credentials: 'same-origin' }).catch(function () {})
       } catch (err) {
         void err
       }
-      this.lifted = null
     }
 
-    /** Where the sphere sits: centre of the free area, or the stage position. */
+    SphereEngine.prototype.liftChatCard = function () {
+      var picked = this.findChatRegion()
+      if (!picked) {
+        this.reportLayout('', 'no candidate', [])
+        return
+      }
+      var self = this
+      this.chatRegion = picked.node
+      picked.node.setAttribute('data-jvs-chat', '1')
+      if (this.chatWatch) clearInterval(this.chatWatch)
+      /* React re-renders can drop the attribute; re-mark it while the mode is on. */
+      this.chatWatch = setInterval(function () {
+        if (!self.stage) return
+        if (!self.chatRegion || !self.chatRegion.isConnected) {
+          var again = self.findChatRegion()
+          if (again) self.chatRegion = again.node
+          else return
+        }
+        if (!self.chatRegion.getAttribute('data-jvs-chat')) self.chatRegion.setAttribute('data-jvs-chat', '1')
+      }, 800)
+      this.reportLayout(
+        picked.reason + ' · ' + String(picked.node.tagName || '').toLowerCase() + (typeof picked.node.className === 'string' && picked.node.className ? '.' + picked.node.className.split(/\s+/)[0] : ''),
+        'lifted',
+        picked.chain,
+      )
+    }
+
+    SphereEngine.prototype.restoreChatCard = function () {
+      if (this.chatWatch) {
+        clearInterval(this.chatWatch)
+        this.chatWatch = null
+      }
+      if (this.chatRegion) {
+        try {
+          this.chatRegion.removeAttribute('data-jvs-chat')
+        } catch (err) {
+          void err
+        }
+      }
+      this.chatRegion = null
+    }
+
     SphereEngine.prototype.stageGeometry = function () {
       var w = this.w || window.innerWidth
       var hgt = this.h || window.innerHeight

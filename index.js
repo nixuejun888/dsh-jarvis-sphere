@@ -955,7 +955,9 @@ function parseChronicleLine(line) {
         add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
       }
     }
-    add('layout', 'ok', cfg.stage === true ? 'stage mode is on (the sphere owns the centre)' : 'stage mode is off; Ctrl+Shift+K switches it on')
+    add('layout', 'ok', cfg.stage === true
+      ? 'stage mode is on · ' + (layoutReport && layoutReport.at ? 'page picked ' + String(layoutReport.pick || 'nothing') : 'page has not reported yet')
+      : 'stage mode is off; Ctrl+Shift+K switches it on')
     add('detail', registered.detail ? 'ok' : 'degraded', registered.detail ? 'read-only detail route registered' : 'detail route is not registered; the sphere cannot open its panel')
     add('scene', cfg.scene === false ? 'skip' : registered.scene && registered.contextTool ? 'ok' : 'degraded', cfg.scene === false ? 'turned off by config' : registered.scene && registered.contextTool ? 'prompt context and jarvis_context are ready' : 'scene hint missing (prompt context or jarvis_context did not register)')
 
@@ -1380,6 +1382,8 @@ function parseChronicleLine(line) {
 
   /** Answer one request from this instance's current snapshot. */
 
+  /** Last layout report posted by the page (diagnostics only). */
+  let layoutReport = null
   /** Detail payloads for the clickable sphere; every kind is read-only. */
   function detailFor(kind) {
     const wanted = String(kind || 'overview')
@@ -1440,6 +1444,18 @@ function parseChronicleLine(line) {
         const label = Array.from(clipLabel(record.u || '')).slice(0, 50).join('')
         items.push({ label: localStamp(record.t) || '', value: label || '（无标签）' })
       }
+    } else if (wanted === 'layout') {
+      title = '布局'
+      if (!layoutReport || !layoutReport.at) {
+        items.push({ label: '状态', value: '页面还没上报布局' })
+      } else {
+        items.push({ label: '选中', value: String(layoutReport.pick || '（无）') })
+        items.push({ label: '窗口', value: String(layoutReport.size || '?') })
+        items.push({ label: '方式', value: String(layoutReport.mode || '?') })
+        for (const row of String(layoutReport.chain || '').split('|').slice(0, 6)) {
+          if (row) items.push({ label: '链', value: row })
+        }
+      }
     } else {
       title = '状态'
       const snapshot = alertSnapshot()
@@ -1494,8 +1510,43 @@ function parseChronicleLine(line) {
 
   /** Read-only detail route behind the clickable sphere. */
   const DETAIL_PATH = '/dsh-jarvis/detail'
+  const readDetailBody = (req, res) => {
+    if (typeof req.on !== 'function') {
+      res.statusCode = 400
+      res.end()
+      return
+    }
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 8192) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}')
+        layoutReport = {
+          at: Date.now(),
+          pick: String(parsed.pick || '').slice(0, 120),
+          size: String(parsed.size || '').slice(0, 40),
+          mode: String(parsed.mode || '').slice(0, 40),
+          chain: String(parsed.chain || '').slice(0, 600),
+        }
+        res.statusCode = 204
+        res.end()
+      } catch (err) {
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.end(JSON.stringify({ ok: false, error: String(err && err.message) }))
+      }
+    })
+  }
+
   const serveDetail = (req, res) => {
     try {
+      if (req.method === 'POST') {
+        readDetailBody(req, res)
+        return
+      }
       if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
         res.statusCode = 405
         res.setHeader('allow', 'GET, HEAD')

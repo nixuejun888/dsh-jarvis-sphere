@@ -85,7 +85,7 @@ const unknown = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvi
 check('an unknown kind falls back to overview', unknown.kind === 'nope' && unknown.title === '状态', unknown)
 
 const post = request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail', 'POST')
-check('POST is rejected with 405', post.status === 405, post.status)
+check('a POST without a stream is refused', post.status === 400, post.status)
 const head = request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail', 'HEAD')
 check('HEAD answers 200 without a body', head.status === 200 && head.body === '', [head.status, head.body.length])
 
@@ -143,6 +143,21 @@ check('dispose releases the detail route', !routes.has('/dsh-jarvis/detail'), [.
   const memory = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=memory').body)
   const more = memory.items.find((item) => item.label === '更多')
   check('a long list reports how many are hidden', !!more && /另有 \d+ 项/u.test(more.value), memory.items.slice(-2))
+}
+// --- 7. the page can report its layout, and the panel shows it ---
+{
+  const { Readable } = await import('node:stream')
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c7'), backupDir: join(root, 'b7'), alerts: false })
+  const route = routes.get('/dsh-jarvis/detail')
+  const stream = Readable.from([JSON.stringify({ pick: 'tall sibling · div.main', mode: 'lifted', size: '1236x973', chain: 'textarea 900x80|div.main 1000x900' })])
+  stream.method = 'POST'
+  stream.url = '/dsh-jarvis/detail'
+  let status = 0
+  route.handler(stream, { statusCode: 0, setHeader() {}, end(body) { status = status || 204 } })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const layout = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=layout').body)
+  check('the layout report is stored and shown', layout.items.some((item) => String(item.value).includes('div.main')), layout.items)
 }
 rmSync(root, { recursive: true, force: true })
 
