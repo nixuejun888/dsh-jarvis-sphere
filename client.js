@@ -1599,9 +1599,9 @@ window.__ModuleLoader__.load({
         for (var fi = 0; fi < this.flyIns.length; fi += 1) {
           var fly = this.flyIns[fi]
           var flyAge = this.time - fly.at
-          if (flyAge > 1.4) continue
+          if (flyAge > 2.6) continue
           keepFly.push(fly)
-          var flyP = Math.min(1, Math.max(0, flyAge / 0.75))
+          var flyP = Math.min(1, Math.max(0, flyAge / 1.35))
           var ease = 1 - Math.pow(1 - flyP, 3)
           var slotX = px[fly.idx]
           var slotY = py[fly.idx]
@@ -1622,7 +1622,7 @@ window.__ModuleLoader__.load({
             ctx.fill()
           }
           if (flyP >= 1) {
-            var sparkLeft = Math.max(0, 1 - (flyAge - 0.75) / 0.55)
+            var sparkLeft = Math.max(0, 1 - (flyAge - 1.35) / 1.0)
             ctx.fillStyle = rgba(flyTint, 0.52 * sparkLeft * alphaScale)
             ctx.beginPath()
             ctx.arc(slotX, slotY, 4 + 11 * (1 - sparkLeft), 0, TAU)
@@ -1733,7 +1733,7 @@ window.__ModuleLoader__.load({
       if (this.comet) {
         var cm2 = this.comet
         var cmAge = this.time - cm2.at
-        var cmDur = 0.95
+        var cmDur = 2.6
         var cmP = Math.min(1, cmAge / cmDur)
         var cmEase = cmP * cmP * (3 - 2 * cmP)
         var landX = cx + Math.cos(cm2.ang) * R * 0.86
@@ -1750,7 +1750,7 @@ window.__ModuleLoader__.load({
           }
         }
         for (var ctr = 0; ctr < 16; ctr += 1) {
-          var tk = Math.max(0, cmEase - ctr * 0.022)
+          var tk = Math.max(0, cmEase - ctr * 0.012)
           var pt = quadAt(tk)
           var ca = (1 - ctr / 16) * 0.75 * alphaScale
           ctx.fillStyle = rgba(mix(hi, accent, ctr / 20), ca)
@@ -1774,7 +1774,7 @@ window.__ModuleLoader__.load({
           for (var ck = 0; ck < 18; ck += 1) this.spawnSpark(1.1)
         }
         if (cmP >= 1) {
-          var flash = Math.max(0, 1 - (cmAge - cmDur) / 0.7)
+          var flash = Math.max(0, 1 - (cmAge - cmDur) / 1.6)
           if (flash > 0) {
             ctx.fillStyle = rgba(accent, 0.30 * flash * alphaScale)
             ctx.beginPath()
@@ -1786,7 +1786,7 @@ window.__ModuleLoader__.load({
             ctx.fill()
           }
         }
-        if (cmAge > 2.0) this.comet = null
+        if (cmAge > 4.8) this.comet = null
       }
 
       // ---- 轮廓环：给球体一条清晰的边 ----
