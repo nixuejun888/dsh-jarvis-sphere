@@ -1147,7 +1147,7 @@ function parseChronicleLine(line) {
   }
 
   function onToolCall(data, sessionId) {
-    if (data && typeof data.name === 'string') detectScene(data.name)
+    if (data && typeof data.name === 'string' && !/^jarvis_/u.test(data.name)) detectScene(data.name)
     const now = Date.now()
     touch()
     const name = toolNameOf(data) || 'tool'
@@ -2201,7 +2201,7 @@ function parseChronicleLine(line) {
     const definition = {
       name: 'jarvis_report',
       description:
-        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the nine-channel '
+        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the ten-channel '
         + 'self-check, backup status and open alerts, written as Markdown under the reports directory. It only writes the '
         + 'report file; it never touches memory.',
       parameters: {
@@ -2750,6 +2750,5 @@ function parseChronicleLine(line) {
     activeTools.clear()
   }
 }
-
 
 

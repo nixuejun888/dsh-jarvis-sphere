@@ -115,6 +115,9 @@ function sessionWith(text) {
   apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c2'), backupDir: join(root, 'b2'), alerts: false })
   emit(listeners, 'session/event', sessionWith('随便说一句'), { type: 'step/start', data: { turn: 1, step: 1 } })
   check('a neutral sentence leaves no scene', state(routes).scene === null, state(routes).scene)
+// the plugin's own tools must not decide what work this is
+  emit(listeners, 'session/event', sessionWith('随便说一句'), { type: 'tool/call', data: { callId: 'c2', name: 'jarvis_context' } })
+  check('a self tool leaves no scene', state(routes).scene === null, state(routes).scene)
   emit(listeners, 'session/event', sessionWith('继续'), { type: 'tool/call', data: { callId: 'c1', name: 'wecom_send_message' } })
   check('a tool name sets the scene', (state(routes).scene || {}).id === 'wecom', state(routes).scene)
 }
