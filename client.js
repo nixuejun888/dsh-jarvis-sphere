@@ -29,6 +29,7 @@ window.__ModuleLoader__.load({
       'html.jvs-stage .jvs-hud{pointer-events:none;}',
       'html.jvs-stage [data-jvs-chat]{position:fixed !important;top:60px !important;right:16px !important;bottom:16px !important;left:auto !important;width:min(46vw,760px) !important;height:auto !important;z-index:40 !important;border-radius:16px;border:1px solid rgba(120,200,255,0.22);background:rgba(6,9,16,0.88);box-shadow:0 24px 60px rgba(0,0,0,0.55);backdrop-filter:blur(10px);overflow-y:auto !important;}',
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
+      'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
       '.jvs-panel{position:absolute;z-index:2147483000;min-width:260px;max-width:380px;max-height:60vh;overflow:auto;pointer-events:auto;padding:10px 12px;border-radius:10px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.92);color:#cfe8ff;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 10px 30px rgba(0,0,0,0.45);backdrop-filter:blur(6px);}'.replace('}','}'),
@@ -605,7 +606,20 @@ window.__ModuleLoader__.load({
     SphereEngine.prototype.findChatRegion = function () {
       var w = window.innerWidth
       var hgt = window.innerHeight
-      var node = document.querySelector('textarea')
+      var seed = document.querySelector('textarea') || document.querySelector('[contenteditable="true"]')
+      /* The layout frame is a row: sidebar / center / rightbar. The right sidebar
+         carries a stable data attribute, so the center column is the sibling of it
+         that contains the composer. This survives hashed class names. */
+      var rail = document.querySelector('[data-rightbar-col]')
+      var frame = rail && rail.parentElement
+      if (frame && seed) {
+        var walk = seed
+        while (walk && walk.parentElement && walk.parentElement !== frame) walk = walk.parentElement
+        if (walk && walk !== frame && frame.contains(walk)) {
+          return { node: walk, chain: [], reason: 'center column (frame sibling)' }
+        }
+      }
+      var node = seed
       var fallback = null
       var chain = []
       while (node && node !== document.body) {
@@ -629,7 +643,21 @@ window.__ModuleLoader__.load({
         }
         node = node.parentElement
       }
-      return fallback
+      if (fallback) return fallback
+      /* fallbacks that do not depend on siblings */
+      var landmark = document.querySelector('[role="main"]')
+      if (landmark && landmark.parentElement !== document.body) {
+        return { node: landmark, chain: chain, reason: 'role=main fallback' }
+      }
+      var probe = document.querySelector('textarea')
+      while (probe && probe !== document.body) {
+        var cls = typeof probe.className === 'string' ? probe.className : ''
+        if (/main|chat|conversation/i.test(cls)) {
+          return { node: probe, chain: chain, reason: 'class fallback' }
+        }
+        probe = probe.parentElement
+      }
+      return null
     }
 
     /** Report what the page measured, so the host can show it in the doctor. */
@@ -656,6 +684,11 @@ window.__ModuleLoader__.load({
       var self = this
       this.chatRegion = picked.node
       picked.node.setAttribute('data-jvs-chat', '1')
+      var rail = document.querySelector('[data-rightbar-col]')
+      if (rail && !rail.contains(picked.node)) {
+        this.railRegion = rail
+        rail.setAttribute('data-jvs-rail', '1')
+      }
       if (this.chatWatch) clearInterval(this.chatWatch)
       /* React re-renders can drop the attribute; re-mark it while the mode is on. */
       this.chatWatch = setInterval(function () {
@@ -666,6 +699,9 @@ window.__ModuleLoader__.load({
           else return
         }
         if (!self.chatRegion.getAttribute('data-jvs-chat')) self.chatRegion.setAttribute('data-jvs-chat', '1')
+        if (self.railRegion && self.railRegion.isConnected && !self.railRegion.getAttribute('data-jvs-rail')) {
+          self.railRegion.setAttribute('data-jvs-rail', '1')
+        }
       }, 800)
       this.reportLayout(
         picked.reason + ' · ' + String(picked.node.tagName || '').toLowerCase() + (typeof picked.node.className === 'string' && picked.node.className ? '.' + picked.node.className.split(/\s+/)[0] : ''),
@@ -686,7 +722,15 @@ window.__ModuleLoader__.load({
           void err
         }
       }
+      if (this.railRegion) {
+        try {
+          this.railRegion.removeAttribute('data-jvs-rail')
+        } catch (err) {
+          void err
+        }
+      }
       this.chatRegion = null
+      this.railRegion = null
     }
 
     SphereEngine.prototype.stageGeometry = function () {
@@ -695,7 +739,7 @@ window.__ModuleLoader__.load({
       if (!this.stage) return null
       var reserved = Math.min(Math.max(w * 0.46, 380), 780)
       var free = Math.max(360, w - reserved)
-      return { cx: free * 0.5, cy: hgt * 0.5, R: Math.min(free, hgt) * (this.immersive ? 0.42 : 0.36) }
+      return { cx: free * 0.5, cy: hgt * 0.45, R: Math.min(free, hgt) * (this.immersive ? 0.40 : 0.34) }
     }
     /** Ctrl+Shift+J 切换沉浸模式；状态存 localStorage，刷新后保持。 */
     SphereEngine.prototype.bindKeys = function () {
