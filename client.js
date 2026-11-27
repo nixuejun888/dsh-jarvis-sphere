@@ -20,6 +20,14 @@ window.__ModuleLoader__.load({
     var TAU = Math.PI * 2
 
     var CSS = [
+      '.jvs-comet-layer{position:fixed;inset:0;pointer-events:none;z-index:2147482000;overflow:hidden;}',
+      '.jvs-comet{position:absolute;width:0;height:0;}',
+      '.jvs-comet .jvs-comet-tail{position:absolute;left:-3px;top:0;width:6px;height:190px;transform-origin:50% 0;transform:rotate(42deg);background:linear-gradient(to bottom,rgba(255,226,170,0.95),rgba(255,170,70,0.45) 45%,rgba(255,150,40,0) 100%);border-radius:50%;filter:blur(1px);}',
+      '.jvs-comet .jvs-comet-core{position:absolute;left:-11px;top:-11px;width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,rgba(255,235,200,0.95) 32%,rgba(255,180,90,0.55) 62%,rgba(255,150,40,0) 100%);box-shadow:0 0 26px 10px rgba(255,190,110,0.55);}',
+      '.jvs-comet.jvs-run{animation:jvsCometFly 2.6s cubic-bezier(0.35,0.05,0.7,0.5) forwards;}',
+      '@keyframes jvsCometFly{0%{transform:translate(var(--jvs-sx),var(--jvs-sy)) scale(0.45);opacity:0;}10%{opacity:1;}100%{transform:translate(var(--jvs-ex),var(--jvs-ey)) scale(1.05);opacity:1;}}',
+      '.jvs-blast-dot{position:absolute;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,rgba(255,214,150,0.95) 45%,rgba(255,150,40,0) 100%);animation:jvsBlast 1.25s ease-out forwards;}',
+      '@keyframes jvsBlast{0%{transform:translate(0,0) scale(0.4);opacity:0;}12%{opacity:1;}100%{transform:translate(var(--jvs-dx),var(--jvs-dy)) scale(0.25);opacity:0;}}',
       '.jvs-root{position:absolute;inset:0;pointer-events:none;overflow:hidden;contain:strict;}',
       '.jvs-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}',
       '.jvs-probe{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}',
@@ -1156,8 +1164,11 @@ window.__ModuleLoader__.load({
         this.spawnArc(1.1)
       }
       var userMessages = Number(this.state.counters.userMessages) || 0
-      if (this.lastUserMessages >= 0 && userMessages > this.lastUserMessages) {
-        this.pendingComet = true
+      if (this.lastUserMessages < 0) {
+        var selfComet = this
+        setTimeout(function () { selfComet.fireCometDom() }, 1200)
+      } else if (userMessages > this.lastUserMessages) {
+        this.fireCometDom()
       }
       this.lastUserMessages = userMessages
       var tools = Number(this.state.counters.tools) || 0
@@ -1168,7 +1179,7 @@ window.__ModuleLoader__.load({
       this.lastTools = tools
       if (!prevRunning && busy) {
         this.burst(0.35)
-        this.pendingComet = true
+        this.fireCometDom()
       }
     }
 
@@ -1211,6 +1222,75 @@ window.__ModuleLoader__.load({
         at: this.time,
         ang: -Math.PI / 2 + ((this.time * 0.618) % 1) * Math.PI * 2,
         landed: false,
+      }
+    }
+
+
+    /** DOM comet + CSS blast: immune to canvas compositing and erasing. */
+    SphereEngine.prototype.fireCometDom = function () {
+      if (typeof document === 'undefined' || !this.canvas) return
+      var host = this.cometHost
+      if (!host || !host.parentNode) {
+        host = document.createElement('div')
+        host.className = 'jvs-comet-layer'
+        document.body.appendChild(host)
+        this.cometHost = host
+      }
+      var rect = this.canvas.getBoundingClientRect()
+      var geo = this.sphereGeometry()
+      var cx = rect.left + geo.cx
+      var cy = rect.top + geo.cy
+      var R = geo.R
+      var comet = document.createElement('div')
+      comet.className = 'jvs-comet jvs-run'
+      comet.style.setProperty('--jvs-sx', (cx + R * 0.98) + 'px')
+      comet.style.setProperty('--jvs-sy', (cy + R * 1.32) + 'px')
+      comet.style.setProperty('--jvs-ex', cx + 'px')
+      comet.style.setProperty('--jvs-ey', cy + 'px')
+      var tail = document.createElement('div')
+      tail.className = 'jvs-comet-tail'
+      var core = document.createElement('div')
+      core.className = 'jvs-comet-core'
+      comet.appendChild(tail)
+      comet.appendChild(core)
+      host.appendChild(comet)
+      var self = this
+      var landed = false
+      var land = function () {
+        if (landed) return
+        landed = true
+        if (comet.parentNode) comet.parentNode.removeChild(comet)
+        self.fireBlastDom(cx, cy, R)
+      }
+      comet.addEventListener('animationend', land)
+      setTimeout(land, 2800)
+    }
+
+    /** Particle-only explosion at the landing point. */
+    SphereEngine.prototype.fireBlastDom = function (cx, cy, R) {
+      if (typeof document === 'undefined') return
+      var host = this.cometHost
+      if (!host || !host.parentNode) return
+      var count = 90
+      for (var i = 0; i < count; i += 1) {
+        var h = (i * 0.6180339887) % 1
+        var ang = h * Math.PI * 2
+        var dist = R * (0.35 + 0.85 * ((i * 0.4142135624) % 1))
+        var dot = document.createElement('div')
+        dot.className = 'jvs-blast-dot'
+        dot.style.left = cx + 'px'
+        dot.style.top = cy + 'px'
+        dot.style.setProperty('--jvs-dx', (Math.cos(ang) * dist).toFixed(1) + 'px')
+        dot.style.setProperty('--jvs-dy', (Math.sin(ang) * dist).toFixed(1) + 'px')
+        dot.style.animationDelay = (i % 6) * 0.012 + 's'
+        dot.style.width = (3 + 4 * (1 - h)).toFixed(1) + 'px'
+        dot.style.height = dot.style.width
+        host.appendChild(dot)
+        ;(function (node) {
+          setTimeout(function () {
+            if (node.parentNode) node.parentNode.removeChild(node)
+          }, 1600)
+        })(dot)
       }
     }
 
@@ -1826,87 +1906,7 @@ window.__ModuleLoader__.load({
         this.drawHud(ctx, cx, cy, R, base, accent, alphaScale)
       }
 
-      // ---- 任务启动彗星：从画面外划入，落在球面并炸开 ----
-      if (this.pendingComet && w && hgt) {
-        this.pendingComet = false
-        this.startComet()
-      }
-      if (this.comet) {
-        var cm2 = this.comet
-        var cmAge = this.time - cm2.at
-        var cmDur = 2.6
-        var cmP = Math.min(1, cmAge / cmDur)
-        var cmEase = cmP * cmP * (3 - 2 * cmP)
-        var landX = cx
-        var landY = cy
-        var startX = cx + R * 0.98
-        var startY = cy + R * 1.32
-        var ctrlX = cx + R * 0.70
-        var ctrlY = cy + R * 0.60
-        var quadAt = function (k) {
-          var inv = 1 - k
-          return {
-            x: inv * inv * startX + 2 * inv * k * ctrlX + k * k * landX,
-            y: inv * inv * startY + 2 * inv * k * ctrlY + k * k * landY,
-          }
-        }
-        for (var ctr = 0; ctr < 16; ctr += 1) {
-          var tk = Math.max(0, cmEase - ctr * 0.012)
-          var pt = quadAt(tk)
-          var ca = (1 - ctr / 16) * 0.75 * alphaScale
-          ctx.fillStyle = rgba(mix(hi, accent, ctr / 20), ca)
-          ctx.beginPath()
-          ctx.arc(pt.x, pt.y, 3.4 - ctr * 0.16, 0, TAU)
-          ctx.fill()
-        }
-        var head = quadAt(cmEase)
-        var headGlow = 6 + 5 * Math.sin(this.time * 16)
-        ctx.fillStyle = rgba(hi, 0.22 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(head.x, head.y, headGlow * 2.2, 0, TAU)
-        ctx.fill()
-        ctx.fillStyle = rgba(hi, 0.95 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(head.x, head.y, 3.2, 0, TAU)
-        ctx.fill()
-        if (cmP >= 1 && !cm2.landed) {
-          cm2.landed = true
-          this.waves.push({ r: 0.22, a: 1, s: 2.2 })
-          this.waves.push({ r: 0.38, a: 0.8, s: 1.4 })
-          for (var ck = 0; ck < 56; ck += 1) this.spawnSpark(1.4)
-        }
-        if (cmP >= 1) {
-          var flash = Math.max(0, 1 - (cmAge - cmDur) / 1.6)
-          if (flash > 0) {
-            var blast = 1 - flash
-            // three expanding rings read as a blast wave, not a flat disc
-            ctx.strokeStyle = rgba(accent, 0.55 * flash * alphaScale)
-            ctx.lineWidth = 2.5 + 5 * flash
-            ctx.beginPath()
-            ctx.arc(landX, landY, 30 + 250 * blast, 0, TAU)
-            ctx.stroke()
-            ctx.strokeStyle = rgba(hi, 0.40 * flash * alphaScale)
-            ctx.lineWidth = 1.6 + 3 * flash
-            ctx.beginPath()
-            ctx.arc(landX, landY, 18 + 165 * blast, 0, TAU)
-            ctx.stroke()
-            ctx.strokeStyle = rgba(accent, 0.30 * flash * alphaScale)
-            ctx.lineWidth = 1.2
-            ctx.beginPath()
-            ctx.arc(landX, landY, 8 + 95 * blast, 0, TAU)
-            ctx.stroke()
-            ctx.fillStyle = rgba(accent, 0.20 * flash * alphaScale)
-            ctx.beginPath()
-            ctx.arc(landX, landY, 22 + 190 * blast, 0, TAU)
-            ctx.fill()
-            ctx.fillStyle = rgba(hi, 0.90 * flash * alphaScale)
-            ctx.beginPath()
-            ctx.arc(landX, landY, 8 + 52 * blast, 0, TAU)
-            ctx.fill()
-          }
-        }
-        if (cmAge > 4.8) this.comet = null
-      }
+
     }
 
     /** Blend two palette colours; t is clamped to 0..1. */
