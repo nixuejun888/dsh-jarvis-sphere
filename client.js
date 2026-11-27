@@ -313,6 +313,7 @@ window.__ModuleLoader__.load({
     SphereEngine.prototype.closePanel = function () {
       if (this.panel && this.panel.parentNode) this.panel.parentNode.removeChild(this.panel)
       this.panel = null
+      this.panelAnchor = null
     }
 
     /** Fetch one detail kind and render it into the panel. */
@@ -326,15 +327,16 @@ window.__ModuleLoader__.load({
         panel.setAttribute('role', 'dialog')
         panel.setAttribute('aria-label', 'JARVIS 详情')
         panel.addEventListener('click', function (event) { event.stopPropagation() })
-        host.appendChild(panel)
+        /* mounted on body: the overlay root is aria-hidden and clips overflow */
+        document.body.appendChild(panel)
         this.panel = panel
       }
       var panelEl = this.panel
       if (anchor) {
         var maxLeft = Math.max(8, (window.innerWidth || 0) - 400)
-        var maxTop = Math.max(8, (window.innerHeight || 0) - 260)
         panelEl.style.left = Math.min(Math.max(8, anchor.x + 12), maxLeft) + 'px'
-        panelEl.style.top = Math.min(Math.max(8, anchor.y + 12), maxTop) + 'px'
+        panelEl.style.top = Math.min(Math.max(8, anchor.y + 12), Math.max(8, (window.innerHeight || 0) - 120)) + 'px'
+        this.panelAnchor = { x: anchor.x, y: anchor.y }
       }
       var tabs = ['overview', 'memory', 'alerts', 'recap', 'backup', 'doctor', 'chronicle']
       var labels = { overview: '状态', memory: '记忆', alerts: '提醒', recap: '待复盘', backup: '备份', doctor: '自检', chronicle: '编年史' }
@@ -357,10 +359,11 @@ window.__ModuleLoader__.load({
       var body = document.createElement('div')
       body.textContent = '读取中…'
       panelEl.appendChild(body)
-      var route = this.altPath || '/dsh-jarvis/detail'
-      var url = route.indexOf('/state') >= 0 ? '/dsh-jarvis/detail' : route.replace(/\/state[^/]*$/u, '/detail')
-      fetch(url + '?kind=' + encodeURIComponent(kind), { credentials: 'same-origin', cache: 'no-store' })
-        .then(function (response) { return response.json() })
+      fetch('/dsh-jarvis/detail?kind=' + encodeURIComponent(kind), { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (response) {
+          if (!response || !response.ok) throw new Error('HTTP ' + String((response && response.status) || 0))
+          return response.json()
+        })
         .then(function (data) {
           if (!self.panel || self.panel !== panelEl) return
           body.textContent = ''
@@ -380,10 +383,27 @@ window.__ModuleLoader__.load({
             body.appendChild(row)
           }
           if (!(data.items || []).length) body.textContent = '（无内容）'
+          self.fitPanel(panelEl)
         })
         .catch(function (err) {
           if (self.panel === panelEl) body.textContent = '读取失败：' + String(err && err.message)
         })
+    }
+
+
+    /** Keep the panel fully visible, flipping above the anchor when needed. */
+    SphereEngine.prototype.fitPanel = function (panelEl) {
+      if (!panelEl) return
+      var viewport = window.innerHeight || 800
+      var height = panelEl.offsetHeight || 0
+      var top = parseFloat(panelEl.style.top) || 8
+      if (top + height > viewport - 8) {
+        var anchorPoint = this.panelAnchor || { y: top - 12 }
+        var above = anchorPoint.y - height - 12
+        top = above >= 8 ? above : Math.max(8, viewport - height - 8)
+        panelEl.style.top = top + 'px'
+      }
+      panelEl.style.maxHeight = Math.max(120, viewport - top - 8) + 'px'
     }
 
     /** Click inside the sphere opens the panel; clicks elsewhere are ignored. */
@@ -398,6 +418,7 @@ window.__ModuleLoader__.load({
         }
         /* never steal a click that belongs to the page: selecting text, pressing
            a button, focusing the composer or following a link stays untouched */
+        if (!self.cfg || !self.cfg.enabled || Number(self.cfg.opacity) <= 0.001) return
         var selection = ''
         try {
           selection = String((window.getSelection() || {}).toString() || '')

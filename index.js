@@ -919,7 +919,7 @@ function parseChronicleLine(line) {
       out.push({ id: 'doctor', level: 'warn', text: '自检 FAIL：' + broken.join(', ') + '（jarvis_doctor 看修法）' })
     }
     if (cfg.backup !== false) {
-      if (recap.pending.length) {
+      if (cfg.recap !== false && recap.pending.length) {
       out.push({ id: 'recap', level: 'info', text: recap.pending.length + ' 条待复盘（说「收录」我就处理）' })
     }
     const backup = backupReport()
@@ -1273,6 +1273,12 @@ function parseChronicleLine(line) {
     const wanted = String(kind || 'overview')
     const items = []
     let title = ''
+    if (wanted === 'chronicle' && cfg.chronicle === false) {
+      return { ok: true, kind: wanted, title: '编年史', items: [{ label: '状态', value: '编年史已关闭（chronicle: false）' }] }
+    }
+    if (wanted === 'recap' && cfg.recap === false) {
+      return { ok: true, kind: wanted, title: '待复盘', items: [{ label: '状态', value: '自动复盘已关闭（recap: false）' }] }
+    }
     if (wanted === 'memory') {
       title = '记忆'
       const root = resolveMemoryRoot()
@@ -1287,7 +1293,7 @@ function parseChronicleLine(line) {
       items.push({ label: '条目', value: String(shadow.total || entries.length) })
       items.push({ label: '文档', value: String(shadow.documents || 0) })
       items.push({ label: '空间', value: String(shadow.spaces || 0) })
-      for (const entry of entries.slice(-8).reverse()) {
+      for (const entry of entries.slice(-12).reverse()) {
         const text = Array.from(clipLabel(entry && entry.content ? entry.content : '')).slice(0, 60).join('')
         items.push({ label: String((entry && entry.importance) || 'normal'), value: text || '（空）' })
       }
@@ -1332,7 +1338,11 @@ function parseChronicleLine(line) {
       items.push({ label: '备份', value: String(backupReport().count || 0) + ' 份' })
       items.push({ label: '提示', value: '点上方按钮看详情，Esc 关闭' })
     }
-    return { ok: true, kind: wanted, title, items: items.slice(0, 14) }
+    if (items.length > 14) {
+      const hidden = items.length - 14
+      return { ok: true, kind: wanted, title, items: items.slice(0, 14).concat([{ label: '更多', value: '另有 ' + hidden + ' 项未显示' }]) }
+    }
+    return { ok: true, kind: wanted, title, items }
   }
 
   const serve = (req, res) => {
@@ -1446,6 +1456,18 @@ function parseChronicleLine(line) {
     else {
       const dispose = attachRoute()
       if (typeof dispose === 'function') disposers.push(dispose)
+      try {
+        const releaseDetail = ctx.webServer.register({ kind: 'exact', path: DETAIL_PATH, handler: serveDetail })
+        registered.detail = true
+        if (typeof releaseDetail === 'function') {
+          disposers.push(() => {
+            registered.detail = false
+            releaseDetail()
+          })
+        }
+      } catch (err) {
+        warn('cannot register ' + DETAIL_PATH + ': ' + String(err && err.message))
+      }
     }
   } catch (err) {
     warn('cannot register ' + ROUTE_PATH + ': ' + String(err && err.message))

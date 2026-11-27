@@ -94,6 +94,56 @@ void dispose
 for (const release of effects) release()
 check('dispose releases the detail route', !routes.has('/dsh-jarvis/detail'), [...routes.keys()])
 
+// --- 2. disabled subsystems and traversal are handled without leaking data ---
+{
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c2'), backupDir: join(root, 'b2'), alerts: false, chronicle: false, recap: false })
+  const chronicle = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=chronicle').body)
+  check('a disabled chronicle says so', chronicle.items.some((item) => String(item.value).includes('已关闭')), chronicle.items)
+  const recap = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=recap').body)
+  check('a disabled recap says so', recap.items.some((item) => String(item.value).includes('已关闭')), recap.items)
+
+  for (const probe of ['?kind=../../etc/passwd', '?kind=%2e%2e%2f%2e%2e%2fetc%2fpasswd', '?kind=' + 'x'.repeat(5000)]) {
+    const got = request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail' + probe)
+    check('traversal-ish kind stays a JSON answer (' + probe.slice(0, 24) + ')', got.status === 200 && got.body.includes('"ok":true'), got.status)
+  }
+  check('traversal never returns file content', !JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=../../etc/passwd').body).items.some((item) => /root:|bin:/u.test(String(item.value))), true)
+}
+
+// --- 3. a truncated list says how many are hidden ---
+{
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: join(root, 'c3'), backupDir: join(root, 'b3'), alerts: false })
+  const doctor = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=doctor').body)
+  check('doctor detail stays within the item cap', doctor.items.length <= 15, doctor.items.length)
+}
+// --- 4. recap off hides the alert; long lists report the remainder ---
+{
+  const dir = join(root, 'c4')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'review-queue.json'), JSON.stringify({ pending: [{ t: new Date().toISOString(), s: 's', text: '旧规则' }], recent: [] }))
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir: dir, backupDir: join(root, 'b4'), alerts: true, recap: false })
+  const body = request(routes.get('/dsh-jarvis/state'), '/dsh-jarvis/state').body
+  const snapshot = JSON.parse(body)
+  check('recap off hides the queue alert', !(snapshot.alerts.active || []).some((alert) => alert.id === 'recap'), snapshot.alerts)
+}
+
+{
+  const many = join(root, 'many')
+  mkdirSync(join(many, 'runtime'), { recursive: true })
+  const entries = []
+  for (let i = 0; i < 20; i += 1) {
+    entries.push({ content: '记忆条目 ' + i, target: 'memory', importance: 'normal', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+  }
+  writeFileSync(join(many, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries }))
+  writeFileSync(join(many, 'runtime', 'MEMORY.md'), 'M'.repeat(100))
+  const { ctx, routes } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDir: many, memoryDirs: [many], chronicleDir: join(root, 'c5'), backupDir: join(root, 'b5'), alerts: false })
+  const memory = JSON.parse(request(routes.get('/dsh-jarvis/detail'), '/dsh-jarvis/detail?kind=memory').body)
+  const more = memory.items.find((item) => item.label === '更多')
+  check('a long list reports how many are hidden', !!more && /另有 \d+ 项/u.test(more.value), memory.items.slice(-2))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
