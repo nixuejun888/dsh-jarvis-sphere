@@ -114,6 +114,7 @@ function byId(report, id) {
   apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir })
   const report = state(routes)?.diagnostics
   check('missing systemPrompt degrades persona', byId(report, 'persona')?.status === 'degraded', byId(report, 'persona'))
+  check('a missing systemPrompt also degrades tools (alert context)', byId(report, 'tools')?.status === 'degraded' && /alerts missing/u.test(byId(report, 'tools')?.detail || ''), byId(report, 'tools'))
   check('overall status degrades', report?.status === 'degraded', report?.status)
   const doctorAdvice = (() => {
     const { ctx: c2, registered: r2 } = makeCtx({ noPrompt: true })

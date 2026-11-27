@@ -164,13 +164,13 @@ function alertContext(contexts) {
     clock += 10 * 1000
     state(routes)
     check('a cleared condition drops its acknowledgement', !(state(routes).alerts.active || []).some((alert) => alert.id === 'context'), state(routes).alerts)
-    clock += 1 * 60000
+    clock += 25 * 60000
     options.pressure = { pressureTokens: 950, contextWindow: 1000 }
     const suppressed = state(routes).alerts
     check('a returning condition is suppressed inside the cooldown', !(suppressed.active || []).some((alert) => alert.id === 'context'), suppressed)
 
-    // after the cooldown it returns on this same instance
-    clock += 31 * 60000
+    // the cooldown is anchored on the retirement moment: 31 minutes after it
+    clock += 6 * 60000
     const revived = state(routes).alerts
     check('a returning condition alerts again after the cooldown', (revived.active || []).some((alert) => alert.id === 'context'), revived)
 
@@ -195,6 +195,15 @@ function alertContext(contexts) {
   const guard = await tool.execute({ action: 'ack', ids: { all: true } }, {})
   check('a non-array ids value acknowledges nothing', guard.acked.length === 0, guard)
   check('a rejected ids value leaves alerts in place', state(routes).alerts.count === before.count, state(routes).alerts)
+}
+// --- 3c. acknowledging before anything reads the snapshot must still work ---
+{
+  const { ctx, routes, registered } = makeCtx()
+  apply(ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: join(root, 'no-backups-3c'), alerts: true })
+  const tool = registered.find((definition) => definition.name === 'jarvis_alerts')
+  const acked = await tool.execute({ action: 'ack' }, {})
+  check('ack works before any snapshot read', Array.isArray(acked.acked) && acked.acked.length >= 1, acked)
+  check('a cold ack leaves nothing active', state(routes).alerts.count === 0, state(routes).alerts)
 }
 // --- 4. six conditions: count is honest, the urgent ones stay visible ---
 {
