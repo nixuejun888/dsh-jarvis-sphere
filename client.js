@@ -1645,26 +1645,72 @@ window.__ModuleLoader__.load({
         ctx.stroke()
       }
 
-      // ---- 准星括弧：4 段弧 + 端点，HUD 味道 ----
-      var retR = R * 1.34
-      var retAlpha = (0.16 + 0.16 * lit) * alphaScale * flick
-      ctx.lineWidth = 2
-      ctx.strokeStyle = rgba(base, retAlpha)
-      for (var rb = 0; rb < 4; rb++) {
-        var baseAng = Math.PI / 4 + rb * (Math.PI / 2)
-        var spread = 0.30
+      // ---- 准星括弧：整圈公转、呼吸、端点光珠与拖尾；有工具在跑时加速 ----
+      var spinLite = Math.min(1, energy)
+      var gyro = this.time * (0.55 + 0.95 * spinLite)
+      var breath = 1 + 0.018 * Math.sin(this.time * 1.4)
+      var retR = R * 1.34 * breath
+      var retAlpha = (0.14 + 0.2 * lit + 0.18 * spinLite) * alphaScale * flick
+      ctx.lineCap = 'round'
+      for (var rb = 0; rb < 4; rb += 1) {
+        var baseAng = gyro + rb * (Math.PI / 2)
+        var spread = 0.22 + 0.10 * spinLite + 0.035 * Math.sin(this.time * 2.3 + rb * 1.7)
+        // trailing ghost arcs make the rotation readable
+        for (var gh = 5; gh >= 1; gh -= 1) {
+          var ghostR = retR * (1 - gh * 0.004)
+          ctx.strokeStyle = rgba(mix(base, hi, 0.2), retAlpha * (0.20 / gh))
+          ctx.lineWidth = 1.1
+          ctx.beginPath()
+          ctx.arc(cx, cy, ghostR, baseAng - gh * 0.045 - spread / 2, baseAng - gh * 0.045 + spread / 2)
+          ctx.stroke()
+        }
+        ctx.strokeStyle = rgba(mix(base, hi, 0.35), retAlpha)
+        ctx.lineWidth = 2
         ctx.beginPath()
         ctx.arc(cx, cy, retR, baseAng - spread / 2, baseAng + spread / 2)
         ctx.stroke()
+        // glowing beads at both ends, pulsing in opposite phase
+        var beadPulse = 0.5 + 0.5 * Math.sin(this.time * 3.1 + rb * 1.9)
+        for (var be = 0; be < 2; be += 1) {
+          var ea = baseAng + (be === 0 ? -1 : 1) * spread / 2
+          var bx = cx + Math.cos(ea) * retR
+          var by = cy + Math.sin(ea) * retR
+          ctx.fillStyle = rgba(hi, retAlpha * (1.1 + 0.9 * beadPulse))
+          ctx.beginPath()
+          ctx.arc(bx, by, 1.5 + 1.1 * beadPulse, 0, TAU)
+          ctx.fill()
+        }
       }
-      ctx.fillStyle = rgba(hi, retAlpha * 1.5)
-      for (var rb2 = 0; rb2 < 4; rb2++) {
-        var rba = Math.PI / 4 + rb2 * (Math.PI / 2)
+      // a dashed connector ring between the four brackets: the gaps travel with
+      // the gyro, which makes the rotation unmistakable even when idle
+      ctx.save()
+      ctx.lineWidth = 1
+      for (var dash = 0; dash < 28; dash += 1) {
+        if (dash % 2 === 1) continue
+        var d0 = gyro + (dash / 28) * TAU
+        var d1 = d0 + (TAU / 28) * 0.62
+        ctx.strokeStyle = rgba(mix(base, hi, 0.4), retAlpha * 0.42)
         ctx.beginPath()
-        ctx.arc(cx + Math.cos(rba - 0.15) * retR, cy + Math.sin(rba - 0.15) * retR, 1.7, 0, TAU)
-        ctx.arc(cx + Math.cos(rba + 0.15) * retR, cy + Math.sin(rba + 0.15) * retR, 1.7, 0, TAU)
-        ctx.fill()
+        ctx.arc(cx, cy, retR * 0.988, d0, d1)
+        ctx.stroke()
       }
+      ctx.restore()
+      // two comets orbiting the bracket ring, each with a short fading tail
+      for (var cm = 0; cm < 2; cm += 1) {
+        var cmAng = this.time * (0.42 + 0.5 * spinLite) * (cm === 0 ? 1 : -1) + cm * Math.PI
+        for (var tail = 6; tail >= 0; tail -= 1) {
+          var ta2 = cmAng - tail * 0.035 * (cm === 0 ? 1 : -1)
+          var tr = retR * (1.002 - tail * 0.0012)
+          var tx = cx + Math.cos(ta2) * tr
+          var ty = cy + Math.sin(ta2) * tr
+          var ta = (1 - tail / 7) * (0.5 + 0.4 * spinLite) * alphaScale
+          ctx.fillStyle = rgba(hi, ta)
+          ctx.beginPath()
+          ctx.arc(tx, ty, tail === 0 ? 2.2 : 1.4, 0, TAU)
+          ctx.fill()
+        }
+      }
+      ctx.lineCap = 'butt'
 
       // ---- 轮廓环：给球体一条清晰的边 ----
       ctx.strokeStyle = rgba(mix(base, hi, 0.25), (0.05 + 0.09 * lit) * alphaScale * flick)
@@ -1789,21 +1835,128 @@ window.__ModuleLoader__.load({
       }
       var memory = clamp(health.memoryRatio)
       var pressure = clamp(health.contextRatio)
-      var clock = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-      var breath = 0.75 + Math.sin(clock / 1800) * 0.25
-      var edge = function (tint, width, peak) {
+      var t = this.time || 0
+      // a segmented belt that rotates: each segment pulses, so the reading
+      // reads as a living meter instead of a painted line
+      var belt = function (level, tint, radius, dir, segs, weight) {
+        if (level < 0.35) return
+        var step = TAU / segs
+        var rot = t * (0.30 + 0.95 * level) * dir
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
-        ctx.lineWidth = width
-        ctx.strokeStyle = rgba(tint, peak * alpha * breath)
-        ctx.beginPath()
-        ctx.arc(cx, cy, R * 1.004, 0, Math.PI * 2)
-        ctx.stroke()
+        ctx.lineCap = 'round'
+        for (var i = 0; i < segs; i += 1) {
+          var wave = 0.55 + 0.45 * Math.sin(t * 2.4 + i * 1.7)
+          var span = step * (0.20 + 0.22 * level + 0.08 * Math.sin(t * 1.7 + i * 0.9))
+          var from = rot + i * step
+          ctx.strokeStyle = rgba(tint, (0.06 + 0.40 * level * wave) * alpha)
+          ctx.lineWidth = (1.0 + weight * level) * (0.7 + 0.4 * wave)
+          ctx.beginPath()
+          ctx.arc(cx, cy, radius, from, from + span)
+          ctx.stroke()
+          // a bead rides the head of every segment
+          var beat = 0.5 + 0.5 * Math.sin(t * 3.6 + i * 2.1)
+          if (beat > 0.62) {
+            var hx = cx + Math.cos(from + span) * radius
+            var hy = cy + Math.sin(from + span) * radius
+            ctx.fillStyle = rgba(hi, (beat - 0.62) * 2.0 * alpha * level)
+            ctx.beginPath()
+            ctx.arc(hx, hy, 1.6, 0, TAU)
+            ctx.fill()
+          }
+        }
         ctx.restore()
       }
-      // past 85%: a thin ring hugging the silhouette, never a field of light
-      if (memory >= 0.85) edge(accent, 2.0, 0.30)
-      if (pressure >= 0.85) edge(this.alert || accent, 2.4, 0.38)
+      var cool = (pal.violet || base)
+      belt(memory, cool, R * 1.012, 1, 18, 2.0)
+      if (pressure >= 0.6) belt(pressure, this.alert || { r: 255, g: 110, b: 110 }, R * 1.045, -1, 8, 2.6)
+      if (memory > 0.02) {
+        var markAng = -Math.PI / 2 + memory * TAU
+        var mx2 = cx + Math.cos(markAng) * R * 1.012
+        var my2 = cy + Math.sin(markAng) * R * 1.012
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.fillStyle = rgba(accent, 0.28 * alpha)
+        ctx.beginPath()
+        ctx.arc(mx2, my2, 7, 0, TAU)
+        ctx.fill()
+        ctx.fillStyle = rgba(accent, 0.95 * alpha)
+        ctx.beginPath()
+        ctx.arc(mx2, my2, 2.4, 0, TAU)
+        ctx.fill()
+        ctx.restore()
+      }
+
+      // rim ripple: a bright arc that travels around the silhouette, so the
+      // sphere has a moving highlight even when nothing else changes
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      var rippleAng = t * 0.9
+      for (var rp = 0; rp < 3; rp += 1) {
+        var ra = rippleAng + rp * (TAU / 3)
+        var rg = ctx.createLinearGradient(
+          cx + Math.cos(ra - 0.5) * R, cy + Math.sin(ra - 0.5) * R,
+          cx + Math.cos(ra + 0.5) * R, cy + Math.sin(ra + 0.5) * R,
+        )
+        rg.addColorStop(0, rgba(hi, 0))
+        rg.addColorStop(0.5, rgba(hi, 0.20 * alpha))
+        rg.addColorStop(1, rgba(hi, 0))
+        ctx.strokeStyle = rg
+        ctx.lineWidth = 2.2
+        ctx.beginPath()
+        ctx.arc(cx, cy, R, ra - 0.5, ra + 0.5)
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      // counter-rotating dashed halo so two layers visibly pass each other
+      var haloStep = TAU / 40
+      var haloRot = -t * 0.38
+      for (var hd = 0; hd < 40; hd += 1) {
+        if (hd % 2 === 1) continue
+        ctx.strokeStyle = rgba(mix(base, hi, 0.5), 0.16 * alpha)
+        ctx.lineWidth = 1.1
+        ctx.beginPath()
+        ctx.arc(cx, cy, R * 1.075, haloRot + hd * haloStep, haloRot + hd * haloStep + haloStep * 0.55)
+        ctx.stroke()
+      }
+
+      // radar sweep: a short bright wedge that goes round the rim
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      var sweep = t * 0.9
+      for (var sw = 0; sw < 26; sw += 1) {
+        var swA = sweep - sw * 0.030
+        var swAlpha = (1 - sw / 26) * 0.16 * alpha
+        ctx.strokeStyle = rgba(hi, swAlpha)
+        ctx.lineWidth = 2.0
+        ctx.beginPath()
+        ctx.arc(cx, cy, R * 1.001, swA - 0.035, swA + 0.035)
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      // three expanding halo rings, staggered, fading as they travel out
+      var haloPeriod = 2.8
+      var basePhase = (t % haloPeriod) / haloPeriod
+      for (var hr = 0; hr < 3; hr += 1) {
+        var ph = (basePhase + hr / 3) % 1
+        var hrad = R * (1.0 + 0.20 * ph)
+        ctx.strokeStyle = rgba(mix(base, hi, 0.3), (1 - ph) * 0.14 * alpha)
+        ctx.lineWidth = 1.2 + (1 - ph) * 1.3
+        ctx.beginPath()
+        ctx.arc(cx, cy, hrad, 0, TAU)
+        ctx.stroke()
+      }
+
+      // keep a whisper of the silhouette so the sphere still reads as solid
+      ctx.save()
+      ctx.lineWidth = 1
+      ctx.strokeStyle = rgba(base, 0.05 * alpha)
+      ctx.beginPath()
+      ctx.arc(cx, cy, R, 0, TAU)
+      ctx.stroke()
+      ctx.restore()
     }
     /** Pick the gauge style; `arc` keeps the previous look for comparison. */
     SphereEngine.prototype.drawGauge = function (ctx, cx, cy, R, base, accent, hi, alpha) {
