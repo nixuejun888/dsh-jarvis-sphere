@@ -753,6 +753,8 @@ function parseChronicleLine(line) {
         add('backup', 'degraded', status.latest + ' is unreadable: ' + String(status.reason || 'unknown') + '; run jarvis_backup verify or create')
       } else if (status.ageDays > 14) {
         add('backup', 'degraded', 'newest archive is ' + status.ageDays + ' days old (' + status.latest + ')')
+      } else if ((status.totals && status.totals.failed) || (status.totals && status.totals.truncated) || (status.truncated || []).length) {
+        add('backup', 'degraded', 'newest archive is partial: ' + (status.totals.failed || 0) + ' failed, limits hit: ' + ((status.truncated || []).join('; ') || 'unknown') + '; consider raising the caps or creating another archive')
       } else if (status.ageDays < 0) {
         add('backup', 'degraded', status.latest + ' has an invalid createdAt; run jarvis_backup verify')
       } else {
@@ -1445,7 +1447,7 @@ function parseChronicleLine(line) {
         type: 'object',
         properties: {
           action: { type: 'string', enum: ['status', 'create', 'verify'], description: 'Default status.' },
-          id: { type: 'string', description: 'Archive directory name for verify; empty uses the newest.' },
+          id: { type: 'string', description: 'Archive id (jarvis-<stamp> or the bare <stamp>) for verify; empty uses the newest.' },
         },
         additionalProperties: false,
       },

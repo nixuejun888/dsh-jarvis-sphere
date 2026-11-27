@@ -83,8 +83,9 @@ export function collectSources({ memoryRoot, chronicleFile, personaFile, pluginD
       }
     }
 
-    /* Memory-space bodies live in SQLite; a live copy is taken together with
-       its -wal/-shm so SQLite can recover the copy consistently. */
+    /* Memory-space bodies live in SQLite. This is a plain file copy taken
+       together with -wal/-shm, so SQLite can usually recover it; it is not a
+       transactional snapshot of a database that is being written. */
     const dataDir = join(memoryRoot, 'data')
     if (existsSync(dataDir)) {
       const dbs = listFiles(dataDir, DB_LIMIT + 1, (name) => /^mnemon\.db(-wal|-shm)?$/u.test(name))
@@ -94,9 +95,11 @@ export function collectSources({ memoryRoot, chronicleFile, personaFile, pluginD
       }
     }
 
-    const archivedDir = join(memoryRoot, 'runtime', 'archived')
+      const archivedDir = join(memoryRoot, 'runtime', 'archived')
     if (existsSync(archivedDir)) {
-      for (const file of listFiles(archivedDir, DOC_LIMIT, (name) => name.endsWith('.json'))) {
+      const archived = listFiles(archivedDir, DOC_LIMIT + 1, (name) => name.endsWith('.json'))
+      if (archived.length > DOC_LIMIT) truncated.push('runtime/archived (first ' + DOC_LIMIT + ' of ' + archived.length + '+)')
+      for (const file of archived.slice(0, DOC_LIMIT)) {
         sources.push({ label: 'runtime/archived/' + file.slice(archivedDir.length + 1).replace(/\\/gu, '/'), file })
       }
     }
@@ -122,7 +125,9 @@ function archiveName(now) {
 export function createBackup(root, collected, options = {}) {
   const keep = Number.isFinite(options.keep) ? Math.max(1, Math.round(options.keep)) : DEFAULT_KEEP
   const now = options.now ?? Date.now()
-  const { sources, truncated } = Array.isArray(collected) ? { sources: collected, truncated: [] } : collected || { sources: [], truncated: [] }
+  const raw = Array.isArray(collected) ? { sources: collected, truncated: [] } : collected || {}
+  const sources = Array.isArray(raw.sources) ? raw.sources : []
+  const truncated = Array.isArray(raw.truncated) ? raw.truncated : []
   if (!sources.length) return { ok: false, reason: 'no sources to archive' }
   /* Same-millisecond creates must not share a directory: a second archive in
      the same tick gets a numeric suffix instead of overwriting the first. */
@@ -275,9 +280,10 @@ export function verifyBackup(root, id) {
   if (!read.manifest) return { ok: false, reason: read.reason, dir }
   const manifest = read.manifest
   const checked = []
-  for (const file of manifest.files) {
+  for (let index = 0; index < manifest.files.length; index += 1) {
+    const file = manifest.files[index]
     if (!file || typeof file.label !== 'string' || !file.label) {
-      checked.push({ label: '<bad entry>', expected: '', actual: '', ok: false })
+      checked.push({ label: '<bad entry #' + (index + 1) + '>', expected: '', actual: '', ok: false })
       continue
     }
     const path = join(dir, file.label)

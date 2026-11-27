@@ -123,6 +123,7 @@ check('prune respects the keep bound', backupStatus(backups).count === 2, backup
   writeFileSync(join(archive, 'manifest.json'), JSON.stringify({ version: 1, files: [{ label: 42 }, null, { label: 'ok.md', sha256: 'deadbeef' }] }))
   const badEntries = verifyBackup(badDir)
   check('bad entries become broken rows', badEntries.ok === false && badEntries.checked === 3 && badEntries.broken.length >= 2, [badEntries.checked, badEntries.broken.length])
+  check('bad entries carry their index', badEntries.broken.some((b) => /<bad entry #1>/u.test(b.label)), badEntries.broken.map((b) => b.label))
 
   writeFileSync(join(archive, 'manifest.json'), '{ not json')
   const brokenJson = verifyBackup(badDir)
@@ -171,6 +172,28 @@ check('prune respects the keep bound', backupStatus(backups).count === 2, backup
   writeFileSync(join(corrupt, 'jarvis-2020-01-01T00-00-00-000', 'manifest.json'), '{ broken')
   const status = backupStatus(corrupt)
   check('status flags an unreadable manifest', status.ok === false && typeof status.reason === 'string', status.ok)
+}
+// --- 10. half-shaped input and an archived over-cap are handled ---
+{
+  const halfDir = join(root, 'half')
+  mkdirSync(halfDir, { recursive: true })
+  let threw = null
+  let half = null
+  try {
+    half = createBackup(halfDir, { sources }, { now: base, keep: 3 })
+  } catch (error) {
+    threw = error
+  }
+  check('half-shaped collected does not throw', threw === null && half && half.ok === true, threw ? String(threw.message) : (half && half.ok))
+
+  const cap = join(root, 'cap')
+  mkdirSync(join(cap, 'runtime', 'archived'), { recursive: true })
+  mkdirSync(join(cap, 'documents', 'active'), { recursive: true })
+  mkdirSync(join(cap, 'data'), { recursive: true })
+  writeFileSync(join(cap, 'runtime', 'memories.json'), '{}')
+  for (let i = 0; i < 3; i += 1) writeFileSync(join(cap, 'runtime', 'archived', 'a' + i + '.json'), '{}')
+  const capped = collectSources({ memoryRoot: cap, chronicleFile: '', personaFile: '', pluginDir: '' })
+  check('archived files are collected', capped.truncated.length === 0, capped.truncated)
 }
 rmSync(root, { recursive: true, force: true })
 

@@ -121,7 +121,7 @@ node test/keeper-smoke.mjs  # 25/25
 | `services` | agents / tokenMeter / schedule / tools / systemPrompt / webServer 是否在位 | 缺服务说明 profile 组合被改过 |
 | `caches` | 记忆/上下文缓存年龄、schedule 读取是否卡死 | 卡死的读取 10 秒后自动重试 |
 | `tools` | 四个只读工具**实际**注册成功与否（失败会如实报 missing） | tools 服务不可用时全部降级；全缺=fail、缺部分=degraded |
-| `backup` | 最新归档是否存在、manifest 是否可读、是否超过 14 天 | 没有归档/损坏/过期都报 degraded，并指向 `jarvis_backup create` |
+| `backup` | 最新归档是否存在、manifest 是否可读、是否超过 14 天、是否被截断或复制失败 | 没有归档/损坏/过期/不完整都报 degraded，并指向 `jarvis_backup create` |
 
 结论只有 `OK / DEGRADED / FAIL / SKIP` 四档；任何服务缺失或抛错都只降级对应通道，不让插件挂掉。
 报告缓存 5 秒（诊断要 stat 文件和探测服务，不能跟着 140ms 轮询跑）。
@@ -238,9 +238,9 @@ node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存�
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
-node test/doctor-smoke.mjs  # 29/29  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
+node test/doctor-smoke.mjs  # 31/31  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
-node test/backup-smoke.mjs  # 33/33  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
+node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

@@ -1,6 +1,6 @@
 // Harness for the self-check: a healthy host reports ok, a broken host reports
 // degraded or fail with a concrete fix, and the report never throws.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../index.js'
@@ -226,6 +226,24 @@ function byId(report, id) {
   const corruptCheck = byId(state(corrupt.routes)?.diagnostics, 'backup')
   check('a corrupt manifest degrades the backup channel', corruptCheck?.status === 'degraded', corruptCheck)
   check('the degradation names the reason', /unreadable/u.test(corruptCheck?.detail || ''), corruptCheck?.detail)
+}
+// --- 10. a partial archive is not green either ---
+{
+  const { createBackup, collectSources } = await import('../backup.js')
+  const partialRoot = join(root, 'partial-backups')
+  mkdirSync(partialRoot, { recursive: true })
+  const collected = collectSources({ memoryRoot: memoryDir, chronicleFile: '', personaFile: '', pluginDir: '' })
+  const made = createBackup(partialRoot, collected, { now: Date.now() - 3600000, keep: 5 })
+  const manifestPath = join(made.dir, 'manifest.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.truncated = ['documents/active (first 500 of 501+)']
+  manifest.totals.truncated = true
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+  const partial = makeCtx()
+  apply(partial.ctx, { nodeCount: 300, memoryDirs: [memoryDir], chronicleDir, backupDir: partialRoot })
+  const partialCheck = byId(state(partial.routes)?.diagnostics, 'backup')
+  check('a truncated archive degrades the backup channel', partialCheck?.status === 'degraded', partialCheck)
+  check('the report names what was capped', /partial|truncated|limits hit/u.test(partialCheck?.detail || ''), partialCheck?.detail)
 }
 rmSync(root, { recursive: true, force: true })
 
