@@ -1736,8 +1736,8 @@ window.__ModuleLoader__.load({
         var cmDur = 2.6
         var cmP = Math.min(1, cmAge / cmDur)
         var cmEase = cmP * cmP * (3 - 2 * cmP)
-        var landX = cx + Math.cos(cm2.ang) * R * 0.86
-        var landY = cy + Math.sin(cm2.ang) * R * 0.86
+        var landX = cx
+        var landY = cy
         var startX = cx + Math.cos(cm2.ang + 1.25) * R * 2.45
         var startY = cy + Math.sin(cm2.ang + 1.25) * R * 2.45
         var ctrlX = cx + Math.cos(cm2.ang + 0.95) * R * 1.6
