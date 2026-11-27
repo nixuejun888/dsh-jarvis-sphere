@@ -8,7 +8,7 @@
  * owner-only HTTP route and animates the sphere from that snapshot.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -539,6 +539,10 @@ export function apply(ctx, config) {
   const chronicle = { pending: new Map(), days: new Map() }
   /** sessionId -> tool calls seen, so a turn's tools are that session's own. */
   const sessionTools = new Map()
+  /** Cached self-check report; diagnostics do file and service probes. */
+  const diagCache = { at: 0, value: undefined }
+  /** What the plugin actually managed to register, for the self-check. */
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -641,6 +645,72 @@ function parseChronicleLine(line) {
     }
   }
 
+  /**
+   * Self-check: every subsystem the plugin depends on, as ok / degraded / fail.
+   * It only reads; the doctor tool and the HUD both consume this one report.
+   */
+  function diagnose() {
+    const now = Date.now()
+    if (diagCache.value && now - diagCache.at < 5000) return diagCache.value
+    const checks = []
+    const add = (id, status, detail) => checks.push({ id, status, detail })
+
+    add('route', registered.route === 'none' ? 'fail' : registered.route === 'alternate' ? 'degraded' : 'ok',
+      registered.route === 'none' ? 'state route is not registered' : registered.route === 'alternate' ? 'serving on the alternate path (an older instance owns the primary)' : 'serving ' + ROUTE_PATH)
+
+    add('persona', !personaOn ? 'skip' : registered.persona === 'registered' ? 'ok' : 'degraded',
+      !personaOn ? 'turned off by config' : registered.persona === 'registered' ? 'section ' + PERSONA_SECTION + ' v' + personaVersion : 'section not registered (systemPrompt unavailable?)')
+
+    let memory = { ok: false }
+    try {
+      memory = projectMemory(ctx, cfg, memoryCache)
+    } catch (err) {
+      add('memory', 'fail', 'projection threw: ' + String(err && err.message))
+    }
+    if (memory && memory.ok) {
+      add('memory', 'ok', (memory.total || 0) + ' entries · ' + Math.round((memory.documents || 0)) + ' docs · root ' + String(memory.root || '?'))
+    } else if (!checks.some((check) => check.id === 'memory')) {
+      add('memory', 'degraded', 'no Mnemon store found; the sphere renders without memory points')
+    }
+
+    if (typeof cfg.chronicle === 'boolean' && cfg.chronicle === false) {
+      add('chronicle', 'skip', 'turned off by config')
+    } else {
+      try {
+        mkdirSync(chronicleDir, { recursive: true })
+        accessSync(chronicleDir, constants.W_OK)
+        add('chronicle', 'ok', 'writable ' + chronicleDir)
+      } catch (err) {
+        add('chronicle', 'fail', 'cannot write ' + chronicleDir + ': ' + String(err && err.message))
+      }
+    }
+
+    const services = ['agents', 'tokenMeter', 'schedule', 'tools', 'systemPrompt', 'webServer']
+    const missing = []
+    for (const name of services) {
+      try {
+        if (typeof ctx.get !== 'function' || !ctx.get(name)) missing.push(name)
+      } catch (err) {
+        missing.push(name)
+      }
+    }
+    add('services', missing.length === 0 ? 'ok' : missing.length >= services.length ? 'fail' : 'degraded',
+      missing.length === 0 ? 'all present' : 'missing: ' + missing.join(', '))
+
+    const stuckSchedule = scheduleCache.inflight && Date.now() - scheduleCache.inflightAt > 10000
+    add('caches', stuckSchedule ? 'degraded' : 'ok',
+      stuckSchedule ? 'schedule read stuck for more than 10 s' : 'memory ' + Math.round((Date.now() - healthCache.at) / 1000) + 's · context ' + Math.round((Date.now() - contextCache.at) / 1000) + 's ago')
+
+    add('tools', (registered.keeper || cfg.keeper === false) && (registered.chronicleTool || cfg.chronicle === false) ? 'ok' : 'degraded',
+      'keeper ' + (registered.keeper ? 'on' : cfg.keeper === false ? 'off' : 'missing') + ' · chronicle ' + (registered.chronicleTool ? 'on' : cfg.chronicle === false ? 'off' : 'missing'))
+
+    const order = { fail: 2, degraded: 1, ok: 0, skip: -1 }
+    let worst = 'ok'
+    for (const check of checks) if (order[check.status] > order[worst]) worst = check.status
+    diagCache.at = now
+    diagCache.value = { status: worst, checks, at: new Date(now).toISOString() }
+    return diagCache.value
+  }
   /** Compact view for the snapshot and the tool: today plus recent days. */
   function chronicleSummary() {
     const today = dayKey(Date.now())
@@ -764,6 +834,7 @@ function parseChronicleLine(line) {
       persona: { name: 'JARVIS', active: personaOn, chars: personaText.length, source: persona.source, version: personaVersion },
       health: health(),
       chronicle: chronicleSummary(),
+      diagnostics: diagnose(),
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -893,6 +964,7 @@ function parseChronicleLine(line) {
         warn('cannot own ' + path + ': ' + String(err && err.message))
       }
     }
+    registered.route = served === ROUTE_PATH ? 'primary' : served === ROUTE_PATH_ALTERNATE ? 'alternate' : 'none'
     if (served && served !== ROUTE_PATH) {
       warn(ROUTE_PATH + ' is still owned by an older instance in this process; serving ' + served)
     }
@@ -939,6 +1011,7 @@ function parseChronicleLine(line) {
     }
     try {
       const release = prompt.section({ name: PERSONA_SECTION, order: PERSONA_ORDER, text: personaText })
+      registered.persona = 'registered'
       return () => {
         if (typeof release === 'function') {
           try {
@@ -1077,20 +1150,22 @@ function parseChronicleLine(line) {
    * takes a generation token so a late settlement cannot clear a newer one.
    */
   function refreshSchedules() {
+    const now = Date.now()
+    /* Check the in-flight attempt before probing the service: a request that
+       arrives while a read is pending must not touch the service at all. */
+    if (scheduleCache.inflight) {
+      if (now - scheduleCache.inflightAt < 10000) return
+      scheduleCache.inflight = false
+    }
     let service
     try {
       service = typeof ctx.get === 'function' ? ctx.get('schedule') : undefined
     } catch (err) {
       service = undefined
     }
-    const now = Date.now()
     if (!service || typeof service.list !== 'function') {
       scheduleCache.at = now
       return
-    }
-    if (scheduleCache.inflight) {
-      if (now - scheduleCache.inflightAt < 10000) return
-      scheduleCache.inflight = false
     }
     scheduleCache.inflight = true
     scheduleCache.inflightAt = now
@@ -1124,9 +1199,11 @@ function parseChronicleLine(line) {
    */
   function scheduleHealth() {
     const now = Date.now()
-    const stale = now - scheduleCache.at > 30000
-    const stuck = scheduleCache.inflight && now - scheduleCache.inflightAt > 10000
-    if (stale || stuck) refreshSchedules()
+    if (scheduleCache.inflight) {
+      if (now - scheduleCache.inflightAt > 10000) refreshSchedules()
+    } else if (now - scheduleCache.at > 30000) {
+      refreshSchedules()
+    }
     return scheduleCache.value
   }
 
@@ -1156,7 +1233,11 @@ function parseChronicleLine(line) {
    * Register the read-only memory audit tool. It only reports; any actual
    * merge, archive or delete stays a decision the user makes.
    */
-  const attachKeeper = () => (cfg.keeper === false ? () => {} : registerKeeper(ctx, resolveMemoryRoot, resolveMemoryLimits))
+  const attachKeeper = () => {
+    if (cfg.keeper === false) return () => {}
+    registered.keeper = true
+    return registerKeeper(ctx, resolveMemoryRoot, resolveMemoryLimits)
+  }
   try {
     if (typeof ctx.effect === 'function') ctx.effect(attachKeeper, 'jarvis-sphere: memory keeper')
     else {
@@ -1217,7 +1298,9 @@ function parseChronicleLine(line) {
       },
     }
     try {
-      return tools.register(definition) || (() => {})
+      const release = tools.register(definition) || (() => {})
+      registered.chronicleTool = true
+      return release
     } catch (err) {
       warn('cannot register jarvis_chronicle: ' + String(err && err.message))
       return () => {}
@@ -1233,6 +1316,65 @@ function parseChronicleLine(line) {
     warn('cannot register the chronicle tool: ' + String(err && err.message))
   }
 
+  /** Read-only doctor: same report as the snapshot, plus one fix per problem. */
+  const attachDoctor = () => {
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const ADVICE = {
+      route: '重启插件；若仍是 none，检查是否有别的插件注册了同名路由',
+      persona: '检查 systemPrompt 服务是否在位；人格段没注册等于没有永久人格',
+      memory: '把 memoryDirs 指向 Mnemon 的数据目录，或确认 dsh-mnemon 的 dataDir 可读',
+      chronicle: '检查 chronicleDir 是否存在且可写（默认 ~/.dsh/jarvis-sphere）',
+      services: '缺服务说明这个 profile 的组合被改过，检查插件行是否被停用',
+      caches: 'schedule 读取卡住，10 秒后会自动重试；持续出现说明服务不响应',
+      tools: '缺工具说明 tools 服务不可用，检查插件行与 profile 组合',
+    }
+    const render = (value) => {
+      const lines = ['JARVIS 自检（只读）· ' + String(value && value.status ? value.status : 'unknown').toUpperCase()]
+      for (const check of (value && value.checks) || []) {
+        lines.push('  [' + String(check.status).toUpperCase() + '] ' + check.id + ' — ' + check.detail)
+        if (check.status === 'fail' || check.status === 'degraded') {
+          const advice = ADVICE[check.id]
+          if (advice) lines.push('        修法：' + advice)
+        }
+      }
+      return lines.join('\n')
+    }
+    const definition = {
+      name: 'jarvis_doctor',
+      description:
+        'Read-only self-check of the JARVIS plugin: state route, persona section, memory store, chronicle writability, '
+        + 'host services, cache freshness and registrations, each reported as OK / DEGRADED / FAIL / SKIP with a fix. '
+        + 'It never changes anything.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 15000,
+      execute: async () => diagnose(),
+    }
+    try {
+      return tools.register(definition) || (() => {})
+    } catch (err) {
+      warn('cannot register jarvis_doctor: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachDoctor, 'jarvis-sphere: doctor tool')
+    else {
+      const dispose = attachDoctor()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the doctor tool: ' + String(err && err.message))
+  }
   return () => {
     for (const dispose of disposers) {
       try {

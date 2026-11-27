@@ -149,7 +149,7 @@ function read(routes) {
   const missing = makeCtx()
   apply(missing.ctx, { nodeCount: 300, chronicle: false })
   for (let i = 0; i < 300; i += 1) read(missing.routes)
-  check('missing schedule service is probed once', missing.calls.getSchedule === 1, missing.calls.getSchedule)
+  check('missing schedule service is not probed per poll', missing.calls.getSchedule <= 2, missing.calls.getSchedule)
 
   const rejecting = makeCtx({ schedule: () => ({ items: [], total: 0 }), scheduleRejects: true })
   apply(rejecting.ctx, { nodeCount: 300, chronicle: false })

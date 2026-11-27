@@ -444,6 +444,7 @@ window.__ModuleLoader__.load({
       /* 仪表：记忆容量压力 + 错误/子代理计数，球体用它决定"要不要提醒你" */
       this.health = data.health && typeof data.health === 'object' ? data.health : null
       this.chronicle = data.chronicle && typeof data.chronicle === 'object' ? data.chronicle : null
+      this.diagnostics = data.diagnostics && typeof data.diagnostics === 'object' ? data.diagnostics : null
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
@@ -1118,6 +1119,9 @@ window.__ModuleLoader__.load({
       headParts.push(s.running ? 'ACTIVE' : 'STANDBY')
       /* 告警排在最前：窗口窄时丢末尾的 TASKS/TOOLS，绝不丢错误提示 */
       if (errors > 0) headParts.push('!' + errors + ' ERR')
+      var diagStatus = this.diagnostics ? String(this.diagnostics.status || '') : ''
+      if (diagStatus === 'fail') headParts.push('DOCTOR FAIL')
+      else if (diagStatus === 'degraded') headParts.push('DOCTOR')
       if (memory && memory.total > 0) {
         headParts.push(memory.total + ' MEM' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
       }

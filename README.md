@@ -108,6 +108,26 @@ node test/keeper-smoke.mjs  # 25/25
 - 只读工具 `jarvis_chronicle` 返回今天 / 最近 7 天概览 + 最近 N 条记录，时间按**本地时区**显示；
 - `chronicle: false` 可整体关掉（不写文件、不注册工具）。
 
+## 自检：`jarvis_doctor`
+
+一个只读诊断工具，也是「坏了能自己说」的地基。它检查七个通道并给每条结论配一句修法：
+
+| 检查 | 判据 | 典型修法 |
+| --- | --- | --- |
+| `route` | state 路由挂在主路径还是备用路径 | 备用路径说明旧实例还占着主路径，重启 DSH 清掉 |
+| `persona` | `jarvis:persona` section 是否真的注册（带版本号） | systemPrompt 不在位时人格等于没生效 |
+| `memory` | Mnemon 存储根可读、条目/文档数 | 用 `memoryDirs` 指到正确目录 |
+| `chronicle` | 目录可建且可写 | 检查 `chronicleDir` 权限 |
+| `services` | agents / tokenMeter / schedule / tools / systemPrompt / webServer 是否在位 | 缺服务说明 profile 组合被改过 |
+| `caches` | 记忆/上下文缓存年龄、schedule 读取是否卡死 | 卡死的读取 10 秒后自动重试 |
+| `tools` | 三个只读工具是否注册成功 | tools 服务不可用时全部降级 |
+
+结论只有 `OK / DEGRADED / FAIL / SKIP` 四档；任何服务缺失或抛错都只降级对应通道，不让插件挂掉。
+报告缓存 5 秒（诊断要 stat 文件和探测服务，不能跟着 140ms 轮询跑）。
+HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
+
+另外加了 `test/import-smoke.mjs`：除了用当前 Node 导入入口模块，还会用**宿主自带的 Node** 再导一次——
+这次就是靠它之外的一次真机加载抓到了 `import { W_OK } from 'node:fs'`（PATH 上的 Node 22 容忍、宿主 Node 24 直接拒绝激活）这类只在宿主上才炸的问题。
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -203,6 +223,8 @@ node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存�
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
+node test/doctor-smoke.mjs  # 17/17  自检：健康全绿、服务缺失降级、目录不可写 FAIL、报告缓存
+node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
