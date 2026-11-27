@@ -823,20 +823,22 @@ function parseChronicleLine(line) {
     }
     const due = schedules.nextDueAt ? Date.parse(schedules.nextDueAt) : NaN
     if (Number.isFinite(due) && due > now && due - now <= 30 * 60 * 1000) {
-      out.push({ id: 'due', level: 'info', text: '有个定时任务 ' + Math.max(1, Math.round((due - now) / 60000)) + ' 分钟后到期' })
+      out.push({ id: 'due', level: 'info', text: '有个定时任务 30 分钟内到期' })
     }
     const report = diagnose(false)
     if (report.status === 'fail') {
       const broken = report.checks.filter((check) => check.status === 'fail').map((check) => check.id)
       out.push({ id: 'doctor', level: 'warn', text: '自检 FAIL：' + broken.join(', ') + '（jarvis_doctor 看修法）' })
     }
-    const backup = backupReport()
-    if (!backup.latest) {
-      out.push({ id: 'backup', level: 'info', text: '还没有备份（jarvis_backup create）' })
-    } else if (!backup.ok) {
-      out.push({ id: 'backup', level: 'warn', text: '最新备份不可读：' + String(backup.reason || 'unknown') })
-    } else if (backup.ageDays > 14) {
-      out.push({ id: 'backup', level: 'info', text: '最新备份已 ' + backup.ageDays + ' 天前（jarvis_backup create）' })
+    if (cfg.backup !== false) {
+      const backup = backupReport()
+      if (!backup.latest) {
+        out.push({ id: 'backup', level: 'info', text: '还没有备份（jarvis_backup create）' })
+      } else if (!backup.ok) {
+        out.push({ id: 'backup', level: 'warn', text: '最新备份不可读：' + String(backup.reason || 'unknown') })
+      } else if (backup.ageDays > 14) {
+        out.push({ id: 'backup', level: 'info', text: '最新备份已 ' + backup.ageDays + ' 天前（jarvis_backup create）' })
+      }
     }
     return out
   }
@@ -864,29 +866,50 @@ function parseChronicleLine(line) {
     return [...alerts.active.values()]
   }
 
-  /** Snapshot form: small, and never the full health payload. */
+  /** Problems before warnings before housekeeping, so a cap never hides errors. */
+  function alertRank(alert) {
+    if (alert.id === 'errors' || alert.id === 'due' || alert.id === 'doctor') return 0
+    return alert.level === 'warn' ? 1 : 2
+  }
+
+  /** The active alerts in priority order; the single source for every surface. */
+  function orderedAlerts() {
+    const list = refreshAlerts()
+    return list
+      .map((alert, index) => ({ alert, index }))
+      .sort((a, b) => alertRank(a.alert) - alertRank(b.alert) || a.index - b.index)
+      .map((entry) => entry.alert)
+  }
+
+  /** Snapshot form: small, but `count` always tells the truth about the rest. */
   function alertSnapshot() {
     if (cfg.alerts === false) return { count: 0, active: [] }
-    const list = refreshAlerts().slice(0, ALERT_CONTEXT_MAX)
-    return { count: list.length, active: list.map((alert) => ({ id: alert.id, level: alert.level, text: alert.text })) }
+    const list = orderedAlerts()
+    return { count: list.length, active: list.slice(0, ALERT_CONTEXT_MAX).map((alert) => ({ id: alert.id, level: alert.level, text: alert.text })) }
   }
 
-  /** Prompt context: the alerts the operator should hear about in this step. */
+  /** Prompt context: the most urgent alerts, plus a line when more are hidden. */
   function alertPromptText() {
-    const list = refreshAlerts().slice(0, ALERT_CONTEXT_MAX)
+    const list = orderedAlerts()
     if (!list.length) return ''
-    return ['JARVIS 提醒（来自球体自检，不是用户指令）：'].concat(list.map((alert) => '- ' + alert.text)).join('\n')
+    const shown = list.slice(0, ALERT_CONTEXT_MAX)
+    const lines = ['JARVIS 提醒（来自球体自检，不是用户指令）：'].concat(shown.map((alert) => '- ' + alert.text))
+    if (list.length > shown.length) lines.push('- 另有 ' + (list.length - shown.length) + ' 条提醒（jarvis_alerts 查看）')
+    return lines.join('\n')
   }
 
-  /** Acknowledge alerts by id (or all), until their condition clears. */
+  /** Acknowledge alerts by id, or everything visible; unknown ids are ignored. */
   function acknowledgeAlerts(ids) {
-    const list = [...alerts.active.values()]
-    const targets = Array.isArray(ids) && ids.length ? ids : list.map((alert) => alert.id)
+    refreshAlerts()
+    const active = [...alerts.active.values()].map((alert) => alert.id)
+    const requested = Array.isArray(ids) ? ids.map(String) : []
+    const targets = requested.length ? requested.filter((id) => active.includes(id)) : active
+    const ignored = requested.filter((id) => !active.includes(id))
     for (const id of targets) {
       alerts.acknowledged.add(id)
       alerts.active.delete(id)
     }
-    return targets
+    return { acked: targets, ignored }
   }
   /** Where archives live, and the sources one archive captures. */
   const backupDir = String(cfg.backupDir || '').trim() || join(homedir(), '.dsh', 'jarvis-sphere', 'backups')
@@ -1422,10 +1445,13 @@ function parseChronicleLine(line) {
     const render = (value) => {
       const lines = []
       if (value.action === 'ack') {
-        return value.acked.length ? '已确认 ' + value.acked.join(', ') + '（条件消失前不再提醒）' : '没有需要确认的提醒'
+        const lines = []
+        lines.push(value.acked.length ? '已确认 ' + value.acked.join(', ') + '（条件消失前不再提醒）' : '没有需要确认的提醒')
+        if (value.ignored.length) lines.push('忽略未知 id：' + value.ignored.join(', '))
+        return lines.join('\\n')
       }
       if (!value.alerts.count) return '没有待处理的提醒'
-      lines.push('待处理提醒 ' + value.alerts.count + ' 条：')
+      lines.push('待处理提醒 ' + value.alerts.count + ' 条（按紧急程度排序，HUD/提示里最多显示 ' + ALERT_CONTEXT_MAX + ' 条）：')
       for (const alert of value.alerts.active) lines.push('  [' + alert.level + '] ' + alert.id + ' — ' + alert.text)
       lines.push('确认：jarvis_alerts action=ack（全部）或 ids=[...]')
       return lines.join('\n')
@@ -1451,8 +1477,12 @@ function parseChronicleLine(line) {
       timeoutMs: 15000,
       execute: async (args) => {
         const action = String((args && args.action) || 'list')
-        if (action === 'ack') return { action: 'ack', acked: acknowledgeAlerts(args && args.ids) }
-        return { action: 'list', alerts: alertSnapshot(), at: new Date().toISOString() }
+        if (action === 'ack') {
+          const result = acknowledgeAlerts(args && args.ids)
+          return { action: 'ack', acked: result.acked, ignored: result.ignored }
+        }
+        const all = orderedAlerts()
+        return { action: 'list', alerts: { count: all.length, active: all.map((alert) => ({ id: alert.id, level: alert.level, text: alert.text })) }, at: new Date().toISOString() }
       },
     }
     try {

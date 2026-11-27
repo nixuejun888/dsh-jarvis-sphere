@@ -154,9 +154,9 @@ HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
 | 没有备份 / 备份不可读 / 超 14 天 | info / warn | 指向 `jarvis_backup create` |
 
 机制上三条约束：
-- **同一问题 30 分钟冷却**，不会每步刷一遍；条件消失后自动撤下；
+- **冷却语义**：告警一旦激活就一直在最新上下文里（DSH 只在内容变化时追加一条快照，不会每步重发）；条件消失后自动撤下；撤下后 30 分钟内若同一条件回来会被冷却压住，超过 30 分钟才重新提醒；
 - **`jarvis_alerts action=ack` 可以确认**（全部或按 id），确认后条件消失前不再提醒；
-- 上下文最多带 4 条、每步重算，快照里只留 `{count, active:[{id, level, text}]}`（实测 < 200 字节）；
+- 上下文按**紧急程度**取前 4 条（errors / due / doctor → warn → info），被藏起来的条目会有一行「另有 N 条提醒」；`count` 始终是全部条数；快照只留 `{count, active:[{id, level, text}]}`（4 条时约 300 字节）；
 - `alerts: false` 一并关掉上下文和工具。
 
 HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
@@ -262,7 +262,7 @@ node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔�
 node test/doctor-smoke.mjs  # 31/31  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
-node test/alert-smoke.mjs  # 21/21  提醒：阈值触发、提示注入、30 分钟冷却、ack、关闭
+node test/alert-smoke.mjs  # 29/29  提醒：六类阈值、优先级截断、提示注入、ack 后条件消失再复活、冷却、关闭
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）
