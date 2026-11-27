@@ -57,6 +57,8 @@ const DEFAULTS = {
   memoryWrite: true,
   /** Auto-recap: queue durable-sounding instructions for review. */
   recap: true,
+  /** Daily report written as Markdown under reportsDir. */
+  report: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -575,7 +577,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -822,6 +824,7 @@ function parseChronicleLine(line) {
       { name: 'alerts', ok: registered.alertTool && (registered.alerts || cfg.alerts === false), disabled: cfg.alerts === false },
       { name: 'memoryWrite', ok: registered.memoryWriter, disabled: cfg.memoryWrite === false },
       { name: 'recap', ok: registered.recapTool, disabled: cfg.recap === false },
+      { name: 'report', ok: registered.reportTool, disabled: cfg.report === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
@@ -1801,6 +1804,175 @@ function parseChronicleLine(line) {
     }
   } catch (err) {
     warn('cannot register the alert tool: ' + String(err && err.message))
+  }
+
+
+  /** Where daily reports live. */
+  const reportsDir = join(chronicleDir, 'reports')
+
+  /** One day key in local time, or the day asked for. */
+  function reportDay(value) {
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value)) return value
+    return dayKey(Date.now())
+  }
+
+  /** Build the Markdown body for one day without writing it. */
+  function buildReport(day) {
+    const lines = []
+    lines.push('# JARVIS 日报 · ' + day)
+    lines.push('')
+    lines.push('## 今天做了什么')
+    const summary = chronicleSummary()
+    const dayCount = summary.days.find((entry) => entry.day === day)
+    lines.push('- 轮次 ' + (dayCount ? dayCount.turns : 0) + ' · 工具 ' + (dayCount ? dayCount.tools : 0))
+    const recent = chronicleLines(8).filter((record) => String(record.d) === day)
+    if (recent.length) {
+      lines.push('- 最近几轮：')
+      for (const record of recent) {
+        const label = Array.from(clipLabel(record.u || '')).slice(0, 40).join('')
+        lines.push('  - ' + (localStamp(record.t) || '') + ' ' + (label || '(无标签)'))
+      }
+    }
+    lines.push('')
+    lines.push('## 记忆')
+    const memory = memoryHealth()
+    const ratio = Number(memory.memoryRatio) || 0
+    lines.push('- MEMORY.md ' + Math.round(ratio * 100) + '% · USER.md ' + Math.round(Number(memory.userRatio) * 100) + '%')
+    lines.push('- 条目 ' + (Number(memory.total) || 0) + ' · 文档 ' + (Number(memory.documents) || 0) + ' · 空间 ' + (Number(memory.spaces) || 0))
+    lines.push('- 待复盘 ' + recap.pending.length + ' 条')
+    lines.push('')
+    lines.push('## 自检')
+    const report = diagnose(true)
+    lines.push('- 总体 ' + String(report.status).toUpperCase())
+    for (const check of report.checks) {
+      lines.push('- ' + check.id + ' ' + String(check.status).toUpperCase() + ' — ' + check.detail)
+    }
+    lines.push('')
+    lines.push('## 备份')
+    const backup = backupReport()
+    lines.push('- ' + backupDir)
+    lines.push('- 最新 ' + (backup.latest || '无') + ' · ' + (backup.count || 0) + ' 份 · ' + (backup.ageDays < 0 ? '时间未知' : backup.ageDays + ' 天前'))
+    lines.push('')
+    lines.push('## 提醒')
+    const active = alertSnapshot().active
+    if (!active.length) lines.push('- 无')
+    else for (const alert of active) lines.push('- [' + alert.level + '] ' + alert.text)
+    return lines.join('\n') + '\n'
+  }
+
+  /** Write one report; returns its path and size. */
+  function writeReport(day) {
+    const target = join(reportsDir, day + '.md')
+    const body = buildReport(day)
+    try {
+      mkdirSync(reportsDir, { recursive: true })
+      writeFileSync(target, body)
+      return { ok: true, day, file: target, bytes: Buffer.byteLength(body, 'utf8'), body }
+    } catch (err) {
+      return { ok: false, day, reason: String(err && err.message) }
+    }
+  }
+
+  /** Recent report files, newest first. */
+  function listReports(limit) {
+    try {
+      const names = readdirSync(reportsDir).filter((name) => /\.md$/u.test(name)).sort().reverse().slice(0, Math.max(1, Math.min(30, limit || 7)))
+      const rows = []
+      for (const name of names) {
+        try {
+          const bytes = statSync(join(reportsDir, name)).size
+          rows.push({ name, day: name.replace(/\.md$/u, ''), bytes })
+        } catch (err) {
+          void err
+        }
+      }
+      return rows
+    } catch (err) {
+      return []
+    }
+  }
+
+
+  /** Daily report tool: build the Markdown, list what exists, never write memory. */
+  const attachReportTool = () => {
+    if (cfg.report === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const render = (value) => {
+      if (value.action === 'create') {
+        if (!value.ok) return '生成失败：' + String(value.reason || 'unknown')
+        return '日报已生成：' + value.file + '（' + Math.round(value.bytes / 1024) + ' KB，' + value.day + '）'
+      }
+      if (value.action === 'read') return value.body || '（空）'
+      if (!value.reports.length) return '还没有日报；调 jarvis_report action=create 生成今天的'
+      const rows = value.reports.map((row) => '  ' + row.day + ' · ' + row.bytes + ' B')
+      return ['最近 ' + value.reports.length + ' 份日报：'].concat(rows).concat(['生成：action=create，可带 day=YYYY-MM-DD']).join('\n')
+    }
+    const definition = {
+      name: 'jarvis_report',
+      description:
+        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the eight-channel '
+        + 'self-check, backup status and open alerts, written as Markdown under the reports directory. It only writes the '
+        + 'report file; it never touches memory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'list', 'read'], description: 'Default create.' },
+          day: { type: 'string', description: 'YYYY-MM-DD; default today.' },
+          limit: { type: 'integer', minimum: 1, maximum: 30, description: 'How many rows list returns (default 7).' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 30000,
+      execute: async (args) => {
+        const action = String((args && args.action) || 'create')
+        const day = reportDay(args && args.day)
+        if (action === 'list') return { action: 'list', reports: listReports(Number(args && args.limit) || 7) }
+        if (action === 'read') {
+          const rows = listReports(30)
+          const hit = rows.find((row) => row.day === day)
+          if (!hit) return { action: 'read', day, body: '', reason: 'no report for ' + day }
+          return { action: 'read', day, body: buildReport(day) }
+        }
+        const written = writeReport(day)
+        if (!written.ok) return { action: 'create', ...written }
+        return { action: 'create', ok: true, day: written.day, file: written.file, bytes: written.bytes }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.reportTool = true
+      return () => {
+        registered.reportTool = false
+        try {
+          release()
+        } catch (err) {
+          warn('report tool release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_report: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachReportTool, 'jarvis-sphere: report tool')
+    else {
+      const dispose = attachReportTool()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the report tool: ' + String(err && err.message))
   }
 
   /** Review queue surface: list what the heuristic caught, then confirm or drop. */

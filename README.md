@@ -180,6 +180,19 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 日报（B）：`jarvis_report`
+
+一条命令把「今天」写成 Markdown，落在 `~/.dsh/jarvis-sphere/reports/YYYY-MM-DD.md`：
+
+- **今天做了什么**：轮次/工具数 + 当天最近几轮的标签；
+- **记忆**：MEMORY/USER 占用比例、条目/文档/空间数、待复盘条数；
+- **自检**：八通道逐项状态；
+- **备份**：目录、最新归档、份数、年龄；
+- **提醒**：当前未处理的告警。
+
+`action=list` 列最近 N 份，`action=read` 取某一天的正文，`day=YYYY-MM-DD` 可补历史。`report: false` 关掉。
+
+边界：**只写报告文件，不碰记忆**；日报不自动定时（要定时得你明确要求，我再建计划任务）。
 ## 自动复盘（A）：可疑规则先进队列
 
 你说的话里如果带「以后／记住／必须／不要再／下次／从现在起／我更喜欢」这类词，插件不会直接写记忆，而是**先记进待复盘队列**，并注入一条提醒；我看到后会问你「要不要收录」。
@@ -299,6 +312,8 @@ node test/reload-smoke.mjs  # 15/15  路由生命周期：停用释放、重启�
 node test/memory-smoke.mjs  # 32/32  记忆聚类（5,000 条不截断）+ 存储根发现 + 人格 section + 仪表接线
 node test/keeper-smoke.mjs  # 25/25  只读审计：容量/重复/陈旧/过长 + 预览脱敏
 node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义、错误剪枝、快照尺寸、服务全挂、TDZ、人设来源与版本
+node test/report-smoke.mjs  # 17/17  日报：五段内容、两天不覆盖、read/list、可关闭
+
 node test/recap-smoke.mjs  # 12/12  自动复盘：入队、去重、提醒、confirm/drop、可关闭
 
 node test/chronicle-smoke.mjs  # 37/37  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭

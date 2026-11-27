@@ -27,5 +27,6 @@
         alerts: true
         memoryWrite: true
         recap: true
+        report: true
         # chronicleDir: 'C:\\绝对路径'
 
