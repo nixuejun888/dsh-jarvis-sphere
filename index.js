@@ -1000,6 +1000,7 @@ function parseChronicleLine(line) {
       warn(ROUTE_PATH + ' is still owned by an older instance in this process; serving ' + served)
     }
     return () => {
+      registered.route = 'none'
       if (typeof release === 'function') {
         try {
           release()
@@ -1044,6 +1045,7 @@ function parseChronicleLine(line) {
       const release = prompt.section({ name: PERSONA_SECTION, order: PERSONA_ORDER, text: personaText })
       registered.persona = 'registered'
       return () => {
+        registered.persona = 'off'
         if (typeof release === 'function') {
           try {
             release()
@@ -1340,7 +1342,11 @@ function parseChronicleLine(line) {
       registered.chronicleTool = true
       return () => {
         registered.chronicleTool = false
-        release()
+        try {
+          release()
+        } catch (err) {
+          warn('chronicle tool release failed: ' + String(err && err.message))
+        }
       }
     } catch (err) {
       warn('cannot register jarvis_chronicle: ' + String(err && err.message))
@@ -1406,7 +1412,11 @@ function parseChronicleLine(line) {
       registered.doctor = true
       return () => {
         registered.doctor = false
-        release()
+        try {
+          release()
+        } catch (err) {
+          warn('doctor tool release failed: ' + String(err && err.message))
+        }
       }
     } catch (err) {
       warn('cannot register jarvis_doctor: ' + String(err && err.message))

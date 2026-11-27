@@ -40,7 +40,7 @@
 
 ## 实现
 
-- Host 半边只做一件事：把 `agent/status`、`agent/assistant-stream`、`session/event`（`tool/call`、`tool/result`、`turn/end`、`assistant/message`）和 `subagent/start` 折进一个约 300 字节的快照，挂在 owner-only 的 `GET /dsh-jarvis/state` 上。
+- Host 半边只做一件事：把 `agent/status`、`agent/assistant-stream`、`session/event`（`tool/call`、`tool/result`、`turn/end`、`assistant/message`）和 `subagent/start` 折进一个约 1.8–2 KB 的快照（空闲典型值，槽位封顶），挂在 owner-only 的 `GET /dsh-jarvis/state` 上。
 - Client 半边注册进 `shell.overlay` 槽位，用 Canvas 2D 画球；节点按深度 4 档 × 光照 3 档批量填充，连线按深度 3 档批量描边。
 - 不写会话日志、不改任何配置、不碰别的插件的 DOM。
 

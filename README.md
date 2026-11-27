@@ -163,7 +163,7 @@ dsh plugin --profile <your-profile> add github:nixuejun888/dsh-jarvis-sphere
 
 ## 它到底吃了哪些数据
 
-Host 半边（`index.js`）挂在 `GET /dsh-jarvis/state` 上，把下面这些折成一个约 300 字节的快照：
+Host 半边（`index.js`）挂在 `GET /dsh-jarvis/state` 上，把下面这些折成一个约 1.8–2 KB 的快照（空闲典型值；记忆条目多时由 460 个哈希槽位封顶，5,000 条实测约 22 KB）：
 
 | 事件 | 用途 |
 | --- | --- |

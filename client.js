@@ -8,7 +8,7 @@
  */
 window.__ModuleLoader__.load({
   id: 'dsh-jarvis-sphere',
-  factory(require) {
+  factory: function (require) {
     var React = require('react')
     var h = React.createElement
 
