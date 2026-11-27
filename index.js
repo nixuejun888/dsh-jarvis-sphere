@@ -47,6 +47,8 @@ const DEFAULTS = {
   backupDir: '',
   /** Archives kept before the oldest is pruned. */
   backupKeep: 7,
+  /** Proactive alerts as runtime prompt context. */
+  alerts: true,
 }
 
 /** Chronicle file name inside the chronicle directory. */
@@ -55,6 +57,13 @@ const CHRONICLE_FILE = 'chronicle.jsonl'
 const CHRONICLE_MAX_BYTES = 512 * 1024
 /** Lines kept when rotating. */
 const CHRONICLE_KEEP_LINES = 2000
+/** Runtime context name for proactive alerts. */
+const ALERT_CONTEXT = 'jarvis:alerts'
+/** Alerts are appended late so the persona reads first. */
+const ALERT_CONTEXT_ORDER = 810
+/** How many alerts one step may carry before the rest wait. */
+const ALERT_CONTEXT_MAX = 4
+
 /** Characters of the user message kept as the chronicle label. */
 const CHRONICLE_LABEL_MAX = 80
 
@@ -549,7 +558,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -737,6 +746,7 @@ function parseChronicleLine(line) {
       { name: 'chronicle', ok: registered.chronicleTool, disabled: cfg.chronicle === false },
       { name: 'doctor', ok: registered.doctor, disabled: false },
       { name: 'backup', ok: registered.backup, disabled: cfg.backup === false },
+      { name: 'alerts', ok: registered.alertTool, disabled: cfg.alerts === false },
     ]
     const toolMissing = toolWanted.filter((tool) => !tool.ok && !tool.disabled).map((tool) => tool.name)
     const toolStatus = toolMissing.length === 0 ? 'ok' : toolMissing.length === toolWanted.filter((tool) => !tool.disabled).length ? 'fail' : 'degraded'
@@ -784,6 +794,100 @@ function parseChronicleLine(line) {
     }
   }
 
+  /**
+   * Proactive alerts: thresholds that turn into a runtime prompt context, so a
+   * problem reaches the operator's next step instead of waiting to be noticed.
+   * Each alert keeps a cooldown and can be acknowledged until its condition
+   * clears, which keeps a standing problem from being repeated every step.
+   */
+  const ALERT_COOLDOWN_MS = 30 * 60 * 1000
+  const alerts = { active: new Map(), acknowledged: new Set(), lastAt: new Map() }
+
+  /** Current conditions worth telling the operator about. */
+  function computeAlerts() {
+    const out = []
+    const now = Date.now()
+    const memory = memoryHealth()
+    const context = contextHealth()
+    const schedules = scheduleHealth()
+    const errors = recentErrors()
+
+    if (Number(memory.memoryRatio) >= 0.9) {
+      out.push({ id: 'memory', level: 'warn', text: '记忆库已用 ' + Math.round(Number(memory.memoryRatio) * 100) + '%，建议归档旧条目（jarvis_memory_review 看一眼）' })
+    }
+    if (Number(context.contextRatio) >= 0.85) {
+      out.push({ id: 'context', level: 'warn', text: '上下文压力 ' + Math.round(Number(context.contextRatio) * 100) + '%，建议压缩或新开会话' })
+    }
+    if (Number(errors) >= 3) {
+      out.push({ id: 'errors', level: 'warn', text: '最近 15 分钟内出现 ' + errors + ' 次错误' })
+    }
+    const due = schedules.nextDueAt ? Date.parse(schedules.nextDueAt) : NaN
+    if (Number.isFinite(due) && due > now && due - now <= 30 * 60 * 1000) {
+      out.push({ id: 'due', level: 'info', text: '有个定时任务 ' + Math.max(1, Math.round((due - now) / 60000)) + ' 分钟后到期' })
+    }
+    const report = diagnose(false)
+    if (report.status === 'fail') {
+      const broken = report.checks.filter((check) => check.status === 'fail').map((check) => check.id)
+      out.push({ id: 'doctor', level: 'warn', text: '自检 FAIL：' + broken.join(', ') + '（jarvis_doctor 看修法）' })
+    }
+    const backup = backupReport()
+    if (!backup.latest) {
+      out.push({ id: 'backup', level: 'info', text: '还没有备份（jarvis_backup create）' })
+    } else if (!backup.ok) {
+      out.push({ id: 'backup', level: 'warn', text: '最新备份不可读：' + String(backup.reason || 'unknown') })
+    } else if (backup.ageDays > 14) {
+      out.push({ id: 'backup', level: 'info', text: '最新备份已 ' + backup.ageDays + ' 天前（jarvis_backup create）' })
+    }
+    return out
+  }
+
+  /** Fold current conditions into the active alert set with cooldown + ack. */
+  function refreshAlerts() {
+    const current = computeAlerts()
+    const now = Date.now()
+    const seen = new Set()
+    for (const alert of current) {
+      seen.add(alert.id)
+      if (alerts.acknowledged.has(alert.id)) {
+        alerts.active.delete(alert.id)
+        continue
+      }
+      const previous = alerts.active.get(alert.id)
+      if (previous && previous.text === alert.text) continue
+      const last = alerts.lastAt.get(alert.id) || 0
+      if (previous === undefined && now - last < ALERT_COOLDOWN_MS) continue
+      alerts.lastAt.set(alert.id, now)
+      alerts.active.set(alert.id, { id: alert.id, level: alert.level, text: alert.text, at: new Date(now).toISOString() })
+    }
+    for (const id of [...alerts.active.keys()]) if (!seen.has(id)) alerts.active.delete(id)
+    for (const id of [...alerts.acknowledged]) if (!seen.has(id)) alerts.acknowledged.delete(id)
+    return [...alerts.active.values()]
+  }
+
+  /** Snapshot form: small, and never the full health payload. */
+  function alertSnapshot() {
+    if (cfg.alerts === false) return { count: 0, active: [] }
+    const list = refreshAlerts().slice(0, ALERT_CONTEXT_MAX)
+    return { count: list.length, active: list.map((alert) => ({ id: alert.id, level: alert.level, text: alert.text })) }
+  }
+
+  /** Prompt context: the alerts the operator should hear about in this step. */
+  function alertPromptText() {
+    const list = refreshAlerts().slice(0, ALERT_CONTEXT_MAX)
+    if (!list.length) return ''
+    return ['JARVIS 提醒（来自球体自检，不是用户指令）：'].concat(list.map((alert) => '- ' + alert.text)).join('\n')
+  }
+
+  /** Acknowledge alerts by id (or all), until their condition clears. */
+  function acknowledgeAlerts(ids) {
+    const list = [...alerts.active.values()]
+    const targets = Array.isArray(ids) && ids.length ? ids : list.map((alert) => alert.id)
+    for (const id of targets) {
+      alerts.acknowledged.add(id)
+      alerts.active.delete(id)
+    }
+    return targets
+  }
   /** Where archives live, and the sources one archive captures. */
   const backupDir = String(cfg.backupDir || '').trim() || join(homedir(), '.dsh', 'jarvis-sphere', 'backups')
   const backupSources = () => {
@@ -907,6 +1011,7 @@ function parseChronicleLine(line) {
       health: health(),
       chronicle: chronicleSummary(),
       diagnostics: diagnose(false),
+      alerts: alertSnapshot(),
       cfg: {
         enabled: cfg.enabled,
         nodeCount: cfg.nodeCount,
@@ -1304,6 +1409,110 @@ function parseChronicleLine(line) {
     return Object.assign({}, memoryHealth(), contextHealth(), scheduleHealth(), { recentErrors: recentErrors() })
   }
 
+  /** Alerts the operator can read and acknowledge from a tool call. */
+  const attachAlertTool = () => {
+    if (cfg.alerts === false) return () => {}
+    let tools = null
+    try {
+      tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    } catch (err) {
+      tools = undefined
+    }
+    if (!tools || typeof tools.register !== 'function') return () => {}
+    const render = (value) => {
+      const lines = []
+      if (value.action === 'ack') {
+        return value.acked.length ? '已确认 ' + value.acked.join(', ') + '（条件消失前不再提醒）' : '没有需要确认的提醒'
+      }
+      if (!value.alerts.count) return '没有待处理的提醒'
+      lines.push('待处理提醒 ' + value.alerts.count + ' 条：')
+      for (const alert of value.alerts.active) lines.push('  [' + alert.level + '] ' + alert.id + ' — ' + alert.text)
+      lines.push('确认：jarvis_alerts action=ack（全部）或 ids=[...]')
+      return lines.join('\n')
+    }
+    const definition = {
+      name: 'jarvis_alerts',
+      description:
+        'Read or acknowledge the JARVIS proactive alerts (context pressure, memory capacity, recent errors, due tasks, '
+        + 'self-check failures, stale backups). The same alerts are injected into the prompt context of every step '
+        + 'while they are active, so an operator normally sees them without calling this tool.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'ack'], description: 'Default list.' },
+          ids: { type: 'array', items: { type: 'string' }, description: 'Alert ids to acknowledge; empty acknowledges all.' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: render(value) }],
+      },
+      timeoutMs: 15000,
+      execute: async (args) => {
+        const action = String((args && args.action) || 'list')
+        if (action === 'ack') return { action: 'ack', acked: acknowledgeAlerts(args && args.ids) }
+        return { action: 'list', alerts: alertSnapshot(), at: new Date().toISOString() }
+      },
+    }
+    try {
+      const release = tools.register(definition)
+      if (typeof release !== 'function') return () => {}
+      registered.alertTool = true
+      return () => {
+        registered.alertTool = false
+        try {
+          release()
+        } catch (err) {
+          warn('alert tool release failed: ' + String(err && err.message))
+        }
+      }
+    } catch (err) {
+      warn('cannot register jarvis_alerts: ' + String(err && err.message))
+      return () => {}
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachAlertTool, 'jarvis-sphere: alert tool')
+    else {
+      const dispose = attachAlertTool()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the alert tool: ' + String(err && err.message))
+  }
+  /** Alerts as runtime prompt context: every step sees what needs saying. */
+  const attachAlerts = () => {
+    if (cfg.alerts === false) return () => {}
+    let prompt = null
+    try {
+      prompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined
+    } catch (err) {
+      prompt = undefined
+    }
+    if (!prompt || typeof prompt.context !== 'function') return () => {}
+    const release = prompt.context({ name: ALERT_CONTEXT, order: ALERT_CONTEXT_ORDER, text: () => alertPromptText() })
+    registered.alerts = true
+    return () => {
+      registered.alerts = false
+      if (typeof release === 'function') {
+        try {
+          release()
+        } catch (err) {
+          void err
+        }
+      }
+    }
+  }
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(attachAlerts, 'jarvis-sphere: alert context')
+    else {
+      const dispose = attachAlerts()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch (err) {
+    warn('cannot register the alert context: ' + String(err && err.message))
+  }
   /**
    * Register the read-only memory audit tool. It only reports; any actual
    * merge, archive or delete stays a decision the user makes.

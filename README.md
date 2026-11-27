@@ -140,6 +140,26 @@ HUD 在 FAIL 时多一段 `DOCTOR FAIL`，DEGRADED 时多一段 `DOCTOR`。
 - 医生（`jarvis_doctor`）多一项 `backup` 检查：没有归档或最新一份超过 14 天 → `DEGRADED`，并直接告诉你跑 `create`。
 
 实测：第一份归档 79 个文件 / 561 KB（记忆 15 条 + 文档 70 篇 + 编年史 + 人格 + 配置）。
+## 主动提醒：从「显示」到「塞进下一步」
+
+宿主没有系统级通知通道（只有账号通知），所以提醒走的是 DSH 自己的提示注入：`systemPrompt.context()` 注册一条运行时上下文，**每一步装配提示时都会重新求值**——问题不用等你看球，下一轮我就会当面说。
+
+| 触发条件 | 级别 | 文案 |
+| --- | --- | --- |
+| 上下文压力 ≥ 85% | warn | 建议压缩或新开会话 |
+| 记忆库已用 ≥ 90% | warn | 建议归档旧条目（指向 `jarvis_memory_review`） |
+| 15 分钟内错误 ≥ 3 次 | warn | 报次数 |
+| 定时任务 ≤ 30 分钟到期 | info | 报几分钟后到期 |
+| 自检有 FAIL 通道 | warn | 点名通道（指向 `jarvis_doctor`） |
+| 没有备份 / 备份不可读 / 超 14 天 | info / warn | 指向 `jarvis_backup create` |
+
+机制上三条约束：
+- **同一问题 30 分钟冷却**，不会每步刷一遍；条件消失后自动撤下；
+- **`jarvis_alerts action=ack` 可以确认**（全部或按 id），确认后条件消失前不再提醒；
+- 上下文最多带 4 条、每步重算，快照里只留 `{count, active:[{id, level, text}]}`（实测 < 200 字节）；
+- `alerts: false` 一并关掉上下文和工具。
+
+HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 ## 画了什么
 
 从下往上十一层，全部 Canvas 2D，没有 WebGL、没有外部依赖：
@@ -216,6 +236,7 @@ Client 半边（`client.js`）注册进 `shell.overlay` 槽位；不读 DOM、�
         backup: true       # 记忆地基归档（jarvis_backup）
         # backupDir: 'C:\绝对路径\'   # 归档目录；空 = ~/.dsh/jarvis-sphere/backups
         backupKeep: 7      # 保留几份
+        alerts: true       # 主动提醒（运行时提示注入 + jarvis_alerts）
         # chronicleDir: 'C:\绝对路径\'   # 编年史目录；空 = ~/.dsh/jarvis-sphere
 ```
 
@@ -241,6 +262,7 @@ node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔�
 node test/doctor-smoke.mjs  # 31/31  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
+node test/alert-smoke.mjs  # 21/21  提醒：阈值触发、提示注入、30 分钟冷却、ack、关闭
 ```
 
 ## 路由生命周期（0.2.3-alpha.2 兼容修复）

@@ -445,6 +445,7 @@ window.__ModuleLoader__.load({
       this.health = data.health && typeof data.health === 'object' ? data.health : null
       this.chronicle = data.chronicle && typeof data.chronicle === 'object' ? data.chronicle : null
       this.diagnostics = data.diagnostics && typeof data.diagnostics === 'object' ? data.diagnostics : null
+      this.alerts = data.alerts && typeof data.alerts === 'object' ? data.alerts : null
       var nextMemoryTotal = nextMemory && nextMemory.ok ? Number(nextMemory.total) || 0 : 0
       /* 新写入一条记忆：亮一颗新光点，顺手划一道弧 */
       if (nextMemoryTotal > prevMemoryTotal) {
@@ -1122,6 +1123,8 @@ window.__ModuleLoader__.load({
       var diagStatus = this.diagnostics ? String(this.diagnostics.status || '') : ''
       if (diagStatus === 'fail') headParts.push('DOCTOR FAIL')
       else if (diagStatus === 'degraded') headParts.push('DOCTOR')
+      var alertCount = this.alerts ? Number(this.alerts.count) || 0 : 0
+      if (alertCount > 0) headParts.push(alertCount + ' ALERT')
       if (memory && memory.total > 0) {
         headParts.push(memory.total + ' MEM' + (pressure > 0 ? ' ' + Math.round(pressure * 100) + '%' : ''))
       }

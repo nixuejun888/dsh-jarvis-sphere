@@ -24,5 +24,6 @@
         backup: true
         # backupDir: 'C:\\绝对路径'
         backupKeep: 7
+        alerts: true
         # chronicleDir: 'C:\\绝对路径'
 
