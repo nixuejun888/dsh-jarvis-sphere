@@ -282,7 +282,7 @@ node test/health-smoke.mjs  # 31/31  仪表 + 人格：缓存 TTL、比例语义
 node test/chronicle-smoke.mjs  # 32/32  编年史：一回合一行、会话隔离、注入块过滤、控制字符、重启恢复、按字节轮换、可关闭
 node test/doctor-smoke.mjs  # 32/32  自检：健康全绿、服务缺失降级、目录未建只报 degraded、工具注册失败如实报 missing、报告缓存
 node test/import-smoke.mjs  # 4/4   入口模块在当前 Node 与宿主 Node 下都能导入
-node test/writer-smoke.mjs  # 41/41  执行通道：选择器防漂移、四种动作、预演零写入、同毫秒归档去重、失败清理、CRLF 保持、白名单
+node test/writer-smoke.mjs  # 46/46  执行通道：选择器防漂移、四种动作、预演零写入、同毫秒归档去重、失败清理、CRLF 保持、白名单
 
 node test/backup-smoke.mjs  # 36/36  归档：源发现（含 SQLite 库）、畸形 manifest 不抛、篡改/缺失检出、id 互通、毫秒去重、轮换、状态
 node test/alert-smoke.mjs  # 40/40  提醒：六类阈值、优先级截断与「另有 N 条」、ack 释放与复活、字符串/非数组 id、提示注入、关闭

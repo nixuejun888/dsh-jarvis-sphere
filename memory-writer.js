@@ -19,8 +19,8 @@ import { join } from 'node:path'
 
 /** Files the writer is allowed to touch, relative to the memory root. */
 const ALLOWED_FILES = new Set(['runtime/MEMORY.md', 'runtime/USER.md'])
-/** Separator line between entries in a projection file. */
-const SEPARATOR_SPLIT = /^[ \t]*§[ \t]*$/mu
+/** Separator line between entries in a projection file (its newline belongs to it). */
+const SEPARATOR_SPLIT = /^[ \t]*§[ \t]*\r?\n/mu
 
 /** Split a projection file into entries; empty chunks are dropped. */
 export function parseEntries(text) {
@@ -40,6 +40,19 @@ export function renderEntries(entries, eol = '\n') {
   if (!entries.length) return ''
   const normalized = entries.map((body) => String(body).replace(/\r\n/gu, '\n').replace(/\n/gu, eol))
   return normalized.join(eol + '§' + eol) + eol
+}
+
+/**
+ * Split a projection file into chunks while keeping each chunk's exact text, so
+ * an untouched entry is written back byte-for-byte (no re-indentation, no BOM
+ * loss); `body` is the trimmed form used for matching and reports.
+ */
+export function parseChunks(text) {
+  return String(text || '')
+    .split(SEPARATOR_SPLIT)
+    /* a chunk owns its inner formatting but not the newline that closes the, the separator */
+    .map((raw) => ({ raw: raw.replace(/\r?\n$/u, ''), body: raw.replace(/^\s+|\s+$/gu, '') }))
+    .filter((chunk) => chunk.body.length > 0)
 }
 
 /** A short preview for logs and reports. */
@@ -122,9 +135,12 @@ export function planOperation(text, request) {
     removed.push({ index: index + 1, preview: preview(body), bytes: Buffer.byteLength(body, 'utf8') })
     replaced.push(body)
   })
+  /* Untouched chunks keep their exact original text (indentation, BOM, inner
+     line endings); only the edited entries are re-rendered. */
+  const chunks = parseChunks(source)
   const next = []
   let inserted = false
-  entries.forEach((body, index) => {
+  chunks.forEach((chunk, index) => {
     if (drop.has(index)) {
       if (!inserted && replacement) {
         next.push(replacement)
@@ -132,11 +148,11 @@ export function planOperation(text, request) {
       }
       return
     }
-    next.push(body)
+    next.push(chunk.raw)
   })
   const eol = eolOf(source)
   const before = renderEntries(entries, eol)
-  const after = renderEntries(next, eol)
+  const after = next.length ? next.join(eol + '§' + eol) + eol : ''
   return {
     ok: true,
     action,
@@ -210,17 +226,31 @@ export function applyPlan(root, relativeFile, plan, options = {}) {
     return { ok: false, reason: 'cannot write ' + temp + ': ' + String(err && err.message) }
   }
 
-  /* 2. the removed bodies are archived under a fresh name */
+  /* 2. the removed bodies are archived under a name that cannot be reused */
   let archiveWritten = false
+  let archiveTarget = archiveFile
   if (plan.replaced && plan.replaced.length) {
     const header = '# ' + plan.action + ' · ' + new Date(now).toISOString() + ' · ' + relativeFile + eol + eol
-    try {
-      writeFileSync(archiveFile, header + plan.replaced.join(eol + '§' + eol) + eol, { flag: 'wx' })
-      archiveWritten = true
-    } catch (err) {
-      removeQuietly(temp)
-      return { ok: false, reason: 'cannot write the archive file: ' + String(err && err.message) }
+    let written = false
+    /* `wx` can still lose a race with another writer: try the next name rather
+       than overwriting an archive that already exists. */
+    for (let attempt = 0; attempt < 20 && !written; attempt += 1) {
+      archiveTarget = attempt === 0 ? archiveFile : archivePath(archiveDir, relativeFile, now + attempt)
+      try {
+        writeFileSync(archiveTarget, header + plan.replaced.join(eol + '§' + eol) + eol, { flag: 'wx' })
+        written = true
+      } catch (err) {
+        if (err && err.code === 'EEXIST') continue
+        removeQuietly(archiveTarget)
+        removeQuietly(temp)
+        return { ok: false, reason: 'cannot write the archive file: ' + String(err && err.message) }
+      }
     }
+    if (!written) {
+      removeQuietly(temp)
+      return { ok: false, reason: 'cannot write the archive file: every candidate name already exists' }
+    }
+    archiveWritten = true
   }
 
   /* 3. swap it in; on failure remove both artefacts so nothing lies around */
@@ -228,10 +258,10 @@ export function applyPlan(root, relativeFile, plan, options = {}) {
     renameSync(temp, file)
   } catch (err) {
     removeQuietly(temp)
-    if (archiveWritten) removeQuietly(archiveFile)
+    if (archiveWritten) removeQuietly(archiveTarget)
     return { ok: false, reason: 'cannot replace ' + file + ': ' + String(err && err.message) }
   }
-  return { ok: true, file, archiveFile: archiveWritten ? archiveFile : '' }
+  return { ok: true, file, archiveFile: archiveWritten ? archiveTarget : '' }
 }
 
 /** Read a projection file, or null when it is missing or not allowed. */

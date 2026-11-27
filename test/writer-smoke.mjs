@@ -188,6 +188,39 @@ function makeCtx() {
   applyPlan(join(root, 'crlf'), 'runtime/MEMORY.md', crlfPlan, { now: Date.now() })
   check('a CRLF file stays CRLF', readFileSync(crlfFile, 'utf8').includes('\r\n'), JSON.stringify(readFileSync(crlfFile, 'utf8')))
 }
+// --- 7. the write gates: incomplete snapshot, drift while snapshotting, audit failure ---
+{
+  const { parseChunks, renderEntries } = await import('../memory-writer.js')
+  const chunks = parseChunks('A\n§\nB\n')
+  check('parseChunks keeps the raw text', chunks.length === 2 && chunks[0].raw === 'A', chunks.map((c) => c.raw))
+  check('renderEntries still joins with the separator', renderEntries(['A', 'B']) === 'A\n§\nB\n', renderEntries(['A', 'B']))
+
+  // an incomplete snapshot (a failed source) must refuse the write
+  const badRoot = join(root, 'bad-snapshot')
+  mkdirSync(join(badRoot, 'runtime'), { recursive: true })
+  writeFileSync(join(badRoot, 'runtime', 'MEMORY.md'), 'A\n§\nB\n')
+  writeFileSync(join(badRoot, 'runtime', 'memories.json'), '{}')
+  const backupBlocked = join(root, 'backup-blocked')
+  writeFileSync(backupBlocked, 'not a directory')
+  const blocked = makeCtx()
+  apply(blocked.ctx, { nodeCount: 300, memoryDirs: [badRoot], chronicleDir: join(root, 'chron-blocked'), backupDir: join(backupBlocked, 'nested'), alerts: false })
+  const blockedTool = blocked.registered.find((definition) => definition.name === 'jarvis_memory_apply')
+  const refused = await blockedTool.execute({ action: 'archive', entries: [2], expected: ['B'], confirm: true }, {})
+  check('a failed snapshot refuses the write', refused.ok === false && /snapshot/u.test(refused.reason), refused)
+  check('a refused write leaves the file untouched', readFileSync(join(badRoot, 'runtime', 'MEMORY.md'), 'utf8') === 'A\n§\nB\n', readFileSync(join(badRoot, 'runtime', 'MEMORY.md'), 'utf8'))
+}
+
+// --- 8. untested entries keep their exact bytes (whitespace, BOM) ---
+{
+  const spaced = join(root, 'spaced')
+  mkdirSync(join(spaced, 'runtime'), { recursive: true })
+  const file = join(spaced, 'runtime', 'MEMORY.md')
+  writeFileSync(file, '\uFEFFA\n\n§\nB\n§\nC\n')
+  const plan = planOperation(readFileSync(file, 'utf8'), { action: 'archive', entries: [3], expected: ['C'] })
+  const { applyPlan } = await import('../memory-writer.js')
+  const written = applyPlan(spaced, 'runtime/MEMORY.md', plan, { now: Date.now() })
+  check('an archive write keeps the BOM and the spacing of untouched entries', written.ok && readFileSync(file, 'utf8').startsWith('\uFEFFA\n\n'), JSON.stringify(readFileSync(file, 'utf8')))
+}
 rmSync(root, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)

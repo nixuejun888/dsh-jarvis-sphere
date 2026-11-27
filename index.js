@@ -13,6 +13,7 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { registerKeeper } from './keeper.js'
 import { backupStatus, collectSources, createBackup, restorePlan, verifyBackup } from './backup.js'
 import { applyPlan, appendAudit, parseEntries, planOperation, readProjection } from './memory-writer.js'
@@ -1528,12 +1529,23 @@ function parseChronicleLine(line) {
         const manifest = backup.manifest || {}
         const failedSources = manifest.totals && manifest.totals.failed ? manifest.totals.failed : 0
         const recorded = Array.isArray(manifest.files) ? manifest.files.find((entry) => entry.label === relative) : undefined
-        if (failedSources > 0 || !recorded || recorded.error || !recorded.sha256) {
+        const truncated = !!(manifest.totals && manifest.totals.truncated)
+        if (failedSources > 0 || truncated || !recorded || recorded.error || !recorded.sha256) {
           return {
             ok: false,
             reason: 'refusing to write: the snapshot is incomplete ('
-              + (failedSources ? failedSources + ' source(s) failed' : 'no verifiable copy of ' + relative)
+              + (failedSources ? failedSources + ' source(s) failed' : truncated ? 'the archive hit a cap' : 'no verifiable copy of ' + relative)
               + '); fix the backup first',
+          }
+        }
+        /* The snapshot must describe the bytes we are about to replace: if the
+           file changed while the archive was being written, refuse rather than
+           overwrite a newer version from a stale baseline. */
+        const currentHash = createHash('sha256').update(current, 'utf8').digest('hex')
+        if (currentHash !== recorded.sha256) {
+          return {
+            ok: false,
+            reason: 'refusing to write: ' + relative + ' changed while the snapshot was being taken; re-run jarvis_memory_review',
           }
         }
         const written = applyPlan(root, relative, plan)
