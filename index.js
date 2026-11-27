@@ -2100,7 +2100,7 @@ function parseChronicleLine(line) {
     const definition = {
       name: 'jarvis_report',
       description:
-        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the eight-channel '
+        'Daily report for this machine: what the day did (chronicle), memory fill and document counts, the nine-channel '
         + 'self-check, backup status and open alerts, written as Markdown under the reports directory. It only writes the '
         + 'report file; it never touches memory.',
       parameters: {
