@@ -275,6 +275,8 @@ window.__ModuleLoader__.load({
       this.memoryPrevCounts = null
       this.flyIns = []
       this.comet = null
+      this.pendingComet = true
+      this.lastUserMessages = -1
 
       this.immersive = false
       this.onKey = null
@@ -1153,6 +1155,11 @@ window.__ModuleLoader__.load({
         this.burst(0.45)
         this.spawnArc(1.1)
       }
+      var userMessages = Number(this.state.counters.userMessages) || 0
+      if (this.lastUserMessages >= 0 && userMessages > this.lastUserMessages) {
+        this.pendingComet = true
+      }
+      this.lastUserMessages = userMessages
       var tools = Number(this.state.counters.tools) || 0
       if (this.lastTools >= 0 && tools > this.lastTools) {
         var n = Math.min(3, tools - this.lastTools)
@@ -1161,7 +1168,7 @@ window.__ModuleLoader__.load({
       this.lastTools = tools
       if (!prevRunning && busy) {
         this.burst(0.35)
-        this.startComet()
+        this.pendingComet = true
       }
     }
 
@@ -1318,6 +1325,7 @@ window.__ModuleLoader__.load({
 
     SphereEngine.prototype.draw = function () {
       var ctx = this.ctx
+
       var w = this.w
       var hgt = this.h
       if (!w || !hgt) return
@@ -1330,6 +1338,7 @@ window.__ModuleLoader__.load({
       if (!cfg.enabled) return
       var alphaScale = cfg.opacity
       if (alphaScale <= 0.001) return
+
 
       var pal = this.palette || PALETTES.dark
       var base = pal[cfg.color] || pal.cyan
@@ -1735,66 +1744,6 @@ window.__ModuleLoader__.load({
       // ---- 外层粒子：绕球公转的尘埃、亮珠与向外流动的粒子 ----
       this.drawOrbitParticles(ctx, cx, cy, R, base, accent, hi, alphaScale, energy)
 
-      // ---- 任务启动彗星：从画面外划入，落在球面并炸开 ----
-      if (this.comet) {
-        var cm2 = this.comet
-        var cmAge = this.time - cm2.at
-        var cmDur = 2.6
-        var cmP = Math.min(1, cmAge / cmDur)
-        var cmEase = cmP * cmP * (3 - 2 * cmP)
-        var landX = cx
-        var landY = cy
-        var startX = cx + Math.cos(cm2.ang + 1.25) * R * 1.12
-        var startY = cy + Math.sin(cm2.ang + 1.25) * R * 1.12
-        var ctrlX = cx + Math.cos(cm2.ang + 1.05) * R * 0.72
-        var ctrlY = cy + Math.sin(cm2.ang + 1.05) * R * 0.72
-        var quadAt = function (k) {
-          var inv = 1 - k
-          return {
-            x: inv * inv * startX + 2 * inv * k * ctrlX + k * k * landX,
-            y: inv * inv * startY + 2 * inv * k * ctrlY + k * k * landY,
-          }
-        }
-        for (var ctr = 0; ctr < 16; ctr += 1) {
-          var tk = Math.max(0, cmEase - ctr * 0.012)
-          var pt = quadAt(tk)
-          var ca = (1 - ctr / 16) * 0.75 * alphaScale
-          ctx.fillStyle = rgba(mix(hi, accent, ctr / 20), ca)
-          ctx.beginPath()
-          ctx.arc(pt.x, pt.y, 3.4 - ctr * 0.16, 0, TAU)
-          ctx.fill()
-        }
-        var head = quadAt(cmEase)
-        var headGlow = 6 + 5 * Math.sin(this.time * 16)
-        ctx.fillStyle = rgba(hi, 0.22 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(head.x, head.y, headGlow * 2.2, 0, TAU)
-        ctx.fill()
-        ctx.fillStyle = rgba(hi, 0.95 * alphaScale)
-        ctx.beginPath()
-        ctx.arc(head.x, head.y, 3.2, 0, TAU)
-        ctx.fill()
-        if (cmP >= 1 && !cm2.landed) {
-          cm2.landed = true
-          this.waves.push({ r: 0.28, a: 1, s: 2.6 })
-          for (var ck = 0; ck < 18; ck += 1) this.spawnSpark(1.1)
-        }
-        if (cmP >= 1) {
-          var flash = Math.max(0, 1 - (cmAge - cmDur) / 1.6)
-          if (flash > 0) {
-            ctx.fillStyle = rgba(accent, 0.30 * flash * alphaScale)
-            ctx.beginPath()
-            ctx.arc(landX, landY, 10 + 52 * (1 - flash), 0, TAU)
-            ctx.fill()
-            ctx.fillStyle = rgba(hi, 0.55 * flash * alphaScale)
-            ctx.beginPath()
-            ctx.arc(landX, landY, 4 + 20 * (1 - flash), 0, TAU)
-            ctx.fill()
-          }
-        }
-        if (cmAge > 4.8) this.comet = null
-      }
-
       // ---- 轮廓环：给球体一条清晰的边 ----
       ctx.strokeStyle = rgba(mix(base, hi, 0.25), (0.05 + 0.09 * lit) * alphaScale * flick)
       ctx.lineWidth = 1.4
@@ -1875,6 +1824,88 @@ window.__ModuleLoader__.load({
         if (alphaScale > 0.15) this.drawPulses(ctx, project, R, alphaScale, cx, cy)
       this.drawGauge(ctx, cx, cy, R, base, accent, hi, alphaScale)
         this.drawHud(ctx, cx, cy, R, base, accent, alphaScale)
+      }
+
+      // ---- 任务启动彗星：从画面外划入，落在球面并炸开 ----
+      if (this.pendingComet && w && hgt) {
+        this.pendingComet = false
+        this.startComet()
+      }
+      if (this.comet) {
+        var cm2 = this.comet
+        var cmAge = this.time - cm2.at
+        var cmDur = 2.6
+        var cmP = Math.min(1, cmAge / cmDur)
+        var cmEase = cmP * cmP * (3 - 2 * cmP)
+        var landX = cx
+        var landY = cy
+        var startX = cx + R * 0.98
+        var startY = cy + R * 1.32
+        var ctrlX = cx + R * 0.70
+        var ctrlY = cy + R * 0.60
+        var quadAt = function (k) {
+          var inv = 1 - k
+          return {
+            x: inv * inv * startX + 2 * inv * k * ctrlX + k * k * landX,
+            y: inv * inv * startY + 2 * inv * k * ctrlY + k * k * landY,
+          }
+        }
+        for (var ctr = 0; ctr < 16; ctr += 1) {
+          var tk = Math.max(0, cmEase - ctr * 0.012)
+          var pt = quadAt(tk)
+          var ca = (1 - ctr / 16) * 0.75 * alphaScale
+          ctx.fillStyle = rgba(mix(hi, accent, ctr / 20), ca)
+          ctx.beginPath()
+          ctx.arc(pt.x, pt.y, 3.4 - ctr * 0.16, 0, TAU)
+          ctx.fill()
+        }
+        var head = quadAt(cmEase)
+        var headGlow = 6 + 5 * Math.sin(this.time * 16)
+        ctx.fillStyle = rgba(hi, 0.22 * alphaScale)
+        ctx.beginPath()
+        ctx.arc(head.x, head.y, headGlow * 2.2, 0, TAU)
+        ctx.fill()
+        ctx.fillStyle = rgba(hi, 0.95 * alphaScale)
+        ctx.beginPath()
+        ctx.arc(head.x, head.y, 3.2, 0, TAU)
+        ctx.fill()
+        if (cmP >= 1 && !cm2.landed) {
+          cm2.landed = true
+          this.waves.push({ r: 0.22, a: 1, s: 2.2 })
+          this.waves.push({ r: 0.38, a: 0.8, s: 1.4 })
+          for (var ck = 0; ck < 56; ck += 1) this.spawnSpark(1.4)
+        }
+        if (cmP >= 1) {
+          var flash = Math.max(0, 1 - (cmAge - cmDur) / 1.6)
+          if (flash > 0) {
+            var blast = 1 - flash
+            // three expanding rings read as a blast wave, not a flat disc
+            ctx.strokeStyle = rgba(accent, 0.55 * flash * alphaScale)
+            ctx.lineWidth = 2.5 + 5 * flash
+            ctx.beginPath()
+            ctx.arc(landX, landY, 30 + 250 * blast, 0, TAU)
+            ctx.stroke()
+            ctx.strokeStyle = rgba(hi, 0.40 * flash * alphaScale)
+            ctx.lineWidth = 1.6 + 3 * flash
+            ctx.beginPath()
+            ctx.arc(landX, landY, 18 + 165 * blast, 0, TAU)
+            ctx.stroke()
+            ctx.strokeStyle = rgba(accent, 0.30 * flash * alphaScale)
+            ctx.lineWidth = 1.2
+            ctx.beginPath()
+            ctx.arc(landX, landY, 8 + 95 * blast, 0, TAU)
+            ctx.stroke()
+            ctx.fillStyle = rgba(accent, 0.20 * flash * alphaScale)
+            ctx.beginPath()
+            ctx.arc(landX, landY, 22 + 190 * blast, 0, TAU)
+            ctx.fill()
+            ctx.fillStyle = rgba(hi, 0.90 * flash * alphaScale)
+            ctx.beginPath()
+            ctx.arc(landX, landY, 8 + 52 * blast, 0, TAU)
+            ctx.fill()
+          }
+        }
+        if (cmAge > 4.8) this.comet = null
       }
     }
 
@@ -2271,5 +2302,3 @@ window.__ModuleLoader__.load({
     }
   },
 })
-
-
