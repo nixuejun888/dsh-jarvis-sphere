@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
       '.jvs-drawer-btn.jvs-right{right:0;border-radius:8px 0 0 8px;}',
       '.jvs-chat-toggle{position:fixed;right:16px;bottom:calc(36vh + 22px);z-index:80;padding:3px 8px;border-radius:8px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
       'html.jvs-full .jvs-chat-toggle{display:block;}',
-      '.jvs-mode-exit{position:fixed;top:10px;right:14px;z-index:80;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
+      '.jvs-mode-exit{position:fixed;top:58px;right:16px;z-index:80;padding:4px 10px;border-radius:999px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.85);color:#8fd3ff;font:11px ui-monospace,monospace;cursor:pointer;pointer-events:auto;display:none;}',
       'html.jvs-full .jvs-mode-exit,html.jvs-stage .jvs-mode-exit{display:block;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
