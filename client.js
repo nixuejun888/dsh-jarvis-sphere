@@ -27,6 +27,14 @@ window.__ModuleLoader__.load({
       'html.jvs-immersive body{background:#05070c !important;}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
+      '.jvs-panel{position:absolute;z-index:2147483000;min-width:260px;max-width:380px;max-height:60vh;overflow:auto;pointer-events:auto;padding:10px 12px;border-radius:10px;border:1px solid rgba(120,200,255,0.25);background:rgba(6,10,18,0.92);color:#cfe8ff;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 10px 30px rgba(0,0,0,0.45);backdrop-filter:blur(6px);}'.replace('}','}'),
+      '.jvs-panel h4{margin:0 0 6px;font-size:12px;letter-spacing:0.08em;color:#8fd3ff;display:flex;justify-content:space-between;align-items:center;}',
+      '.jvs-panel .jvs-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px;}',
+      '.jvs-panel .jvs-tabs button{pointer-events:auto;cursor:pointer;font:11px ui-monospace,monospace;color:#9fd8ff;background:rgba(120,200,255,0.08);border:1px solid rgba(120,200,255,0.25);border-radius:6px;padding:2px 6px;}',
+      '.jvs-panel .jvs-close{pointer-events:auto;cursor:pointer;background:none;border:none;color:#8fd3ff;font-size:14px;line-height:1;}',
+      '.jvs-panel .jvs-row{display:flex;gap:8px;padding:2px 0;border-bottom:1px dashed rgba(120,200,255,0.12);}',
+      '.jvs-panel .jvs-row b{flex:0 0 auto;color:#7fb6d8;font-weight:500;}',
+      '.jvs-panel .jvs-row span{flex:1 1 auto;word-break:break-all;}',
     ].join('')
 
     /* 调色板：深色主题发光，浅色主题换深青配合 multiply */
@@ -242,6 +250,10 @@ window.__ModuleLoader__.load({
 
       this.immersive = false
       this.onKey = null
+      this.panel = null
+      this.onClick = null
+      this.onKeyDown = null
+      this.root = this.host
       this.onResize = this.onResize.bind(this)
       this.frame = this.frame.bind(this)
 
@@ -254,6 +266,7 @@ window.__ModuleLoader__.load({
       }
       this.onResize()
       this.bindKeys()
+      this.bindPanel()
       this.rebuild(this.cfg.nodeCount)
       this.detectTheme()
 
@@ -270,6 +283,7 @@ window.__ModuleLoader__.load({
       if (this.resizeObserver) this.resizeObserver.disconnect()
       else window.removeEventListener('resize', this.onResize)
       if (this.onKey) window.removeEventListener('keydown', this.onKey, true)
+      this.unbindPanel()
       if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas)
       if (this.probe && this.probe.parentNode) this.probe.parentNode.removeChild(this.probe)
     }
@@ -281,6 +295,138 @@ window.__ModuleLoader__.load({
       this.sparks = []
       this.arcs = []
       this.px = null
+    }
+
+
+    /** Screen-space sphere geometry, mirroring draw()'s centre and radius. */
+    SphereEngine.prototype.sphereGeometry = function () {
+      var w = this.w || window.innerWidth
+      var hgt = this.h || window.innerHeight
+      var cfg = this.cfg || {}
+      var cx = w / 2 + (Number(cfg.offsetX) || 0)
+      var cy = hgt / 2 + (Number(cfg.offsetY) || 0)
+      var R = Math.min(w, hgt) * (this.immersive ? 0.46 : 0.315)
+      return { cx: cx, cy: cy, R: R }
+    }
+
+    /** Close the detail panel if it is open. */
+    SphereEngine.prototype.closePanel = function () {
+      if (this.panel && this.panel.parentNode) this.panel.parentNode.removeChild(this.panel)
+      this.panel = null
+    }
+
+    /** Fetch one detail kind and render it into the panel. */
+    SphereEngine.prototype.loadPanel = function (kind, anchor) {
+      var self = this
+      var host = this.root
+      if (!host) return
+      if (!this.panel) {
+        var panel = document.createElement('div')
+        panel.className = 'jvs-panel'
+        panel.setAttribute('role', 'dialog')
+        panel.setAttribute('aria-label', 'JARVIS 详情')
+        panel.addEventListener('click', function (event) { event.stopPropagation() })
+        host.appendChild(panel)
+        this.panel = panel
+      }
+      var panelEl = this.panel
+      if (anchor) {
+        var maxLeft = Math.max(8, (window.innerWidth || 0) - 400)
+        var maxTop = Math.max(8, (window.innerHeight || 0) - 260)
+        panelEl.style.left = Math.min(Math.max(8, anchor.x + 12), maxLeft) + 'px'
+        panelEl.style.top = Math.min(Math.max(8, anchor.y + 12), maxTop) + 'px'
+      }
+      var tabs = ['overview', 'memory', 'alerts', 'recap', 'backup', 'doctor', 'chronicle']
+      var labels = { overview: '状态', memory: '记忆', alerts: '提醒', recap: '待复盘', backup: '备份', doctor: '自检', chronicle: '编年史' }
+      panelEl.innerHTML = '<h4><span>JARVIS</span><button class="jvs-close" aria-label="关闭">×</button></h4>'
+      var closeBtn = panelEl.querySelector('.jvs-close')
+      if (closeBtn) closeBtn.onclick = function () { self.closePanel() }
+      var tabRow = document.createElement('div')
+      tabRow.className = 'jvs-tabs'
+      for (var i = 0; i < tabs.length; i++) {
+        ;(function (name) {
+          var button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = labels[name]
+          if (name === kind) button.style.borderColor = 'rgba(140,220,255,0.8)'
+          button.onclick = function () { self.loadPanel(name, null) }
+          tabRow.appendChild(button)
+        })(tabs[i])
+      }
+      panelEl.appendChild(tabRow)
+      var body = document.createElement('div')
+      body.textContent = '读取中…'
+      panelEl.appendChild(body)
+      var route = this.altPath || '/dsh-jarvis/detail'
+      var url = route.indexOf('/state') >= 0 ? '/dsh-jarvis/detail' : route.replace(/\/state[^/]*$/u, '/detail')
+      fetch(url + '?kind=' + encodeURIComponent(kind), { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (response) { return response.json() })
+        .then(function (data) {
+          if (!self.panel || self.panel !== panelEl) return
+          body.textContent = ''
+          if (!data || data.ok === false) {
+            body.textContent = '读取失败：' + String((data && (data.error || data.reason)) || 'unknown')
+            return
+          }
+          for (var j = 0; j < (data.items || []).length; j++) {
+            var row = document.createElement('div')
+            row.className = 'jvs-row'
+            var key = document.createElement('b')
+            key.textContent = data.items[j].label
+            var value = document.createElement('span')
+            value.textContent = data.items[j].value
+            row.appendChild(key)
+            row.appendChild(value)
+            body.appendChild(row)
+          }
+          if (!(data.items || []).length) body.textContent = '（无内容）'
+        })
+        .catch(function (err) {
+          if (self.panel === panelEl) body.textContent = '读取失败：' + String(err && err.message)
+        })
+    }
+
+    /** Click inside the sphere opens the panel; clicks elsewhere are ignored. */
+    SphereEngine.prototype.bindPanel = function () {
+      var self = this
+      if (this.onClick) return
+      this.onClick = function (event) {
+        if (self.panel) {
+          if (self.panel.contains(event.target)) return
+          self.closePanel()
+          return
+        }
+        /* never steal a click that belongs to the page: selecting text, pressing
+           a button, focusing the composer or following a link stays untouched */
+        var selection = ''
+        try {
+          selection = String((window.getSelection() || {}).toString() || '')
+        } catch (err) {
+          selection = ''
+        }
+        if (selection) return
+        var target = event.target
+        if (target && target.closest && target.closest('button,a,input,textarea,select,[contenteditable="true"],[role="button"]')) return
+        var geo = self.sphereGeometry()
+        var dx = event.clientX - geo.cx
+        var dy = event.clientY - geo.cy
+        if (dx * dx + dy * dy > geo.R * geo.R) return
+        self.loadPanel('overview', { x: event.clientX, y: event.clientY })
+      }
+      this.onKeyDown = function (event) {
+        if (event && event.key === 'Escape') self.closePanel()
+      }
+      window.addEventListener('click', this.onClick, true)
+      window.addEventListener('keydown', this.onKeyDown, true)
+    }
+
+    /** Detach the panel listeners. */
+    SphereEngine.prototype.unbindPanel = function () {
+      if (this.onClick) window.removeEventListener('click', this.onClick, true)
+      if (this.onKeyDown) window.removeEventListener('keydown', this.onKeyDown, true)
+      this.onClick = null
+      this.onKeyDown = null
+      this.closePanel()
     }
 
     /** 沉浸模式：球占满视口，把对话面板改成半透明，一键可还原。 */

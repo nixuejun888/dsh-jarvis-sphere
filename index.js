@@ -577,7 +577,7 @@ export function apply(ctx, config) {
   /** Cached self-check report; diagnostics do file and service probes. */
   const diagCache = { at: 0, value: undefined }
   /** What the plugin actually managed to register, for the self-check. */
-  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false }
+  const registered = { route: 'none', persona: 'off', keeper: false, chronicleTool: false, doctor: false, backup: false, alerts: false, alertTool: false, memoryWriter: false, recapTool: false, reportTool: false, detail: false }
 
   /** Aggregate every line the file holds (bounded by the rotation budget). */
   function aggregateChronicle(lines) {
@@ -855,6 +855,8 @@ function parseChronicleLine(line) {
         add('backup', 'ok', status.latest + ' · ' + (status.totals ? status.totals.files + ' files / ' + Math.round(status.totals.bytes / 1024) + ' KB' : 'no manifest') + ' · ' + status.ageDays + 'd old')
       }
     }
+    add('detail', registered.detail ? 'ok' : 'degraded', registered.detail ? 'read-only detail route registered' : 'detail route is not registered; the sphere cannot open its panel')
+
     const order = { fail: 2, degraded: 1, ok: 0, skip: -1 }
     let worst = 'ok'
     for (const check of checks) if (order[check.status] > order[worst]) worst = check.status
@@ -1265,6 +1267,74 @@ function parseChronicleLine(line) {
   }
 
   /** Answer one request from this instance's current snapshot. */
+
+  /** Detail payloads for the clickable sphere; every kind is read-only. */
+  function detailFor(kind) {
+    const wanted = String(kind || 'overview')
+    const items = []
+    let title = ''
+    if (wanted === 'memory') {
+      title = '记忆'
+      const root = resolveMemoryRoot()
+      let entries = []
+      try {
+        const raw = root ? JSON.parse(readFileSync(join(root, 'runtime', 'memories.json'), 'utf8')) : { entries: [] }
+        entries = Array.isArray(raw.entries) ? raw.entries : []
+      } catch (err) {
+        entries = []
+      }
+      const shadow = projectMemory(ctx, cfg, memoryCache)
+      items.push({ label: '条目', value: String(shadow.total || entries.length) })
+      items.push({ label: '文档', value: String(shadow.documents || 0) })
+      items.push({ label: '空间', value: String(shadow.spaces || 0) })
+      for (const entry of entries.slice(-8).reverse()) {
+        const text = Array.from(clipLabel(entry && entry.content ? entry.content : '')).slice(0, 60).join('')
+        items.push({ label: String((entry && entry.importance) || 'normal'), value: text || '（空）' })
+      }
+    } else if (wanted === 'alerts') {
+      title = '提醒'
+      const snapshot = alertSnapshot()
+      items.push({ label: '待处理', value: String(snapshot.count) })
+      for (const alert of snapshot.active) items.push({ label: alert.level, value: alert.text })
+      if (!snapshot.active.length) items.push({ label: '状态', value: '没有待处理的提醒' })
+    } else if (wanted === 'recap') {
+      title = '待复盘'
+      items.push({ label: '条数', value: String(recap.pending.length) })
+      for (const item of recap.pending.slice(-8)) items.push({ label: '规则', value: item.text })
+      if (!recap.pending.length) items.push({ label: '状态', value: '没有待复盘的指令' })
+    } else if (wanted === 'backup') {
+      title = '备份'
+      const status = backupReport()
+      items.push({ label: '目录', value: backupDir })
+      items.push({ label: '最新', value: String(status.latest || '无') })
+      items.push({ label: '份数', value: String(status.count || 0) })
+      items.push({ label: '大小', value: status.totals ? Math.round(status.totals.bytes / 1024) + ' KB' : '未知' })
+    } else if (wanted === 'doctor') {
+      title = '自检'
+      const report = diagnose(true)
+      items.push({ label: '总体', value: String(report.status).toUpperCase() })
+      for (const check of report.checks) items.push({ label: check.id, value: String(check.status).toUpperCase() + ' — ' + check.detail })
+    } else if (wanted === 'chronicle') {
+      title = '编年史'
+      const summary = chronicleSummary()
+      items.push({ label: '今天', value: summary.todayTurns + ' 轮 · ' + summary.todayTools + ' 次工具' })
+      for (const record of chronicleDay(dayKey(Date.now()), 6).reverse()) {
+        const label = Array.from(clipLabel(record.u || '')).slice(0, 50).join('')
+        items.push({ label: localStamp(record.t) || '', value: label || '（无标签）' })
+      }
+    } else {
+      title = '状态'
+      const snapshot = alertSnapshot()
+      const memory = projectMemory(ctx, cfg, memoryCache)
+      items.push({ label: '记忆', value: String(memory.total || 0) + ' 条 · 文档 ' + String(memory.documents || 0) })
+      items.push({ label: '提醒', value: String(snapshot.count) })
+      items.push({ label: '待复盘', value: String(recap.pending.length) })
+      items.push({ label: '备份', value: String(backupReport().count || 0) + ' 份' })
+      items.push({ label: '提示', value: '点上方按钮看详情，Esc 关闭' })
+    }
+    return { ok: true, kind: wanted, title, items: items.slice(0, 14) }
+  }
+
   const serve = (req, res) => {
     try {
       if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
@@ -1298,6 +1368,37 @@ function parseChronicleLine(line) {
    * release it, so this instance claims ROUTE_PATH_ALTERNATE and the Client half
    * polls it after the primary snapshot fails the BUILD check.
    */
+
+  /** Read-only detail route behind the clickable sphere. */
+  const DETAIL_PATH = '/dsh-jarvis/detail'
+  const serveDetail = (req, res) => {
+    try {
+      if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
+        res.statusCode = 405
+        res.setHeader('allow', 'GET, HEAD')
+        res.end()
+        return
+      }
+      let kind = 'overview'
+      try {
+        const url = new URL(String((req && req.url) || '/'), 'http://localhost')
+        kind = url.searchParams.get('kind') || 'overview'
+      } catch (err) {
+        kind = 'overview'
+      }
+      const body = JSON.stringify(detailFor(kind))
+      res.statusCode = 200
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.setHeader('cache-control', 'no-store')
+      res.setHeader('content-length', Buffer.byteLength(body))
+      res.end(req.method === 'HEAD' ? undefined : body)
+    } catch (err) {
+      res.statusCode = 500
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ ok: false, error: String((err && err.message) || err) }))
+    }
+  }
+
   const attachRoute = () => {
     let release = null
     let served = ''
@@ -1326,7 +1427,22 @@ function parseChronicleLine(line) {
     }
   }
   try {
-    if (typeof ctx.effect === 'function') ctx.effect(attachRoute, 'jarvis-sphere: state route')
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(attachRoute, 'jarvis-sphere: state route')
+      ctx.effect(() => {
+        try {
+          const release = ctx.webServer.register({ kind: 'exact', path: DETAIL_PATH, handler: serveDetail })
+          registered.detail = true
+          return () => {
+            registered.detail = false
+            if (typeof release === 'function') release()
+          }
+        } catch (err) {
+          warn('cannot register ' + DETAIL_PATH + ': ' + String(err && err.message))
+          return () => {}
+        }
+      }, 'jarvis-sphere: detail route')
+    }
     else {
       const dispose = attachRoute()
       if (typeof dispose === 'function') disposers.push(dispose)

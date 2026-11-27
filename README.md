@@ -120,7 +120,8 @@ node test/keeper-smoke.mjs  # 25/25
 | `chronicle` | 目录可写；未创建时报 degraded（诊断本身不建目录，首个回合才建） | 检查 `chronicleDir` 权限，祖先若是文件直接 fail |
 | `services` | agents / tokenMeter / schedule / tools / systemPrompt / webServer 是否在位 | 缺服务说明 profile 组合被改过 |
 | `caches` | 记忆/上下文缓存年龄、schedule 读取是否卡死 | 卡死的读取 10 秒后自动重试 |
-| `tools` | 五个只读工具/通道**实际**注册成功与否（keeper / chronicle / doctor / backup / alerts；alerts 还要提醒上下文注册成功，失败会如实报 missing） | tools 服务不可用时全部降级；全缺=fail、缺部分=degraded |
+| `detail` | 只读详情路由 `GET /dsh-jarvis/detail` 是否注册 | 没注册时点球打不开面板 |
+| 	ools | 五个只读工具/通道**实际**注册成功与否（keeper / chronicle / doctor / backup / alerts；alerts 还要提醒上下文注册成功，失败会如实报 missing） | tools 服务不可用时全部降级；全缺=fail、缺部分=degraded |
 | `backup` | 最新归档是否存在、manifest 是否可读、是否超过 14 天、是否被截断或复制失败 | 没有归档/损坏/过期/不完整都报 degraded，并指向 `jarvis_backup create` |
 
 结论只有 `OK / DEGRADED / FAIL / SKIP` 四档；任何服务缺失或抛错都只降级对应通道，不让插件挂掉。
@@ -180,6 +181,23 @@ HUD 多一段 `N ALERT`（在 DOCTOR 之后）。
 - 写后重新解析，条目数与预期不符会返回 `ok: false` 并提示重跑 `jarvis_memory_review`；审计写不进去会 warn，不会假装成功。
 
 实测：`archive` 第 2 条 → 文件 3 条变 2 条、原文进归档、审计一行、快照存在；`target: 'user'` 只动 `USER.md`，`MEMORY.md` 字节不变。
+## 可点击球体（C）：点球开只读面板
+
+单击球体（背景区域）打开一个浮层，顶部有七个页签：
+
+| 页签 | 内容 |
+| --- | --- |
+| 状态 | 记忆条数/文档数、提醒数、待复盘数、备份份数 |
+| 记忆 | 条目/文档/空间计数 + 最近 8 条（重要性 + 前 60 字） |
+| 提醒 | 待处理告警与级别 |
+| 待复盘 | 队列里的规则原文 |
+| 备份 | 目录、最新归档、份数、体积 |
+| 自检 | 十通道逐项状态 |
+| 编年史 | 今天轮次/工具 + 最近 6 轮标签 |
+
+- 数据来自新只读路由 `GET /dsh-jarvis/detail?kind=...`（与 state 同源鉴权，只读，不写任何文件）；
+- **不抢页面点击**：选中文字、点按钮/链接/输入框、拖滚动条都不会触发；只有落在球体半径内且目标非交互元素才打开；
+- `Esc` 或点面板外关闭；面板是 DOM，不依赖 DSH 类名，停用插件即消失。
 ## 日报（B）：`jarvis_report`
 
 一条命令把「今天」写成 Markdown，落在 `~/.dsh/jarvis-sphere/reports/YYYY-MM-DD.md`：
