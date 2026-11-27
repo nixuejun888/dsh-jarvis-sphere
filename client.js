@@ -21,11 +21,22 @@ window.__ModuleLoader__.load({
 
     var CSS = [
       '.jvs-comet-layer{position:fixed;inset:0;pointer-events:none;z-index:2147482000;overflow:hidden;}',
-      '.jvs-comet{position:absolute;width:0;height:0;}',
-      '.jvs-comet .jvs-comet-tail{position:absolute;left:-3px;top:0;width:6px;height:190px;transform-origin:50% 0;transform:rotate(42deg);background:linear-gradient(to bottom,rgba(255,226,170,0.95),rgba(255,170,70,0.45) 45%,rgba(255,150,40,0) 100%);border-radius:50%;filter:blur(1px);}',
-      '.jvs-comet .jvs-comet-core{position:absolute;left:-11px;top:-11px;width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,rgba(255,235,200,0.95) 32%,rgba(255,180,90,0.55) 62%,rgba(255,150,40,0) 100%);box-shadow:0 0 26px 10px rgba(255,190,110,0.55);}',
-      '.jvs-comet.jvs-run{animation:jvsCometFly 2.6s cubic-bezier(0.35,0.05,0.7,0.5) forwards;}',
-      '@keyframes jvsCometFly{0%{transform:translate(var(--jvs-sx),var(--jvs-sy)) scale(0.45);opacity:0;}10%{opacity:1;}100%{transform:translate(var(--jvs-ex),var(--jvs-ey)) scale(1.05);opacity:1;}}',
+      '.jvs-comet{position:absolute;width:0;height:0;will-change:transform,opacity;}',
+      '.jvs-comet .jvs-tail-outer{position:absolute;left:-5px;top:0;width:10px;height:300px;transform-origin:50% 0;transform:rotate(38deg);border-radius:999px;background:linear-gradient(to bottom,rgba(255,236,190,0.85) 0%,rgba(255,190,110,0.45) 22%,rgba(255,140,60,0.18) 55%,rgba(255,120,40,0) 100%);filter:blur(6px);}',
+      '.jvs-comet .jvs-tail-inner{position:absolute;left:-2px;top:0;width:4px;height:210px;transform-origin:50% 0;transform:rotate(38deg);border-radius:999px;background:linear-gradient(to bottom,#ffffff 0%,rgba(255,246,225,0.95) 18%,rgba(255,200,130,0.55) 50%,rgba(255,160,80,0) 100%);filter:blur(0.7px);}',
+      '.jvs-comet .jvs-head-flare{position:absolute;left:-46px;top:-1.5px;width:92px;height:3px;background:linear-gradient(to right,rgba(255,245,220,0),rgba(255,255,255,0.95) 50%,rgba(255,245,220,0));filter:blur(0.5px);}',
+      '.jvs-comet .jvs-head-flare2{position:absolute;left:-1.5px;top:-30px;width:3px;height:60px;background:linear-gradient(to bottom,rgba(255,245,220,0),rgba(255,255,255,0.8) 50%,rgba(255,245,220,0));filter:blur(0.5px);}',
+      '.jvs-comet .jvs-comet-core{position:absolute;left:-16px;top:-16px;width:32px;height:32px;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,#fff7e6 26%,rgba(255,222,168,0.85) 46%,rgba(255,168,72,0.45) 68%,rgba(255,140,50,0) 100%);box-shadow:0 0 22px 10px rgba(255,214,150,0.55),0 0 60px 26px rgba(255,150,60,0.28);}',
+      '.jvs-comet .jvs-comet-ember{position:absolute;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:radial-gradient(circle,#fff3d8 0%,rgba(255,170,80,0.9) 55%,rgba(255,140,50,0) 100%);animation:jvsEmberFade 0.8s ease-out forwards;}',
+      '@keyframes jvsEmberFade{0%{opacity:0.95;}100%{opacity:0;}}',
+      '.jvs-comet.jvs-run{animation:jvsCometFly 2.6s cubic-bezier(0.42,0.02,0.62,0.98) forwards;}',
+      '@keyframes jvsCometFly{0%{transform:translate(var(--jvs-sx),var(--jvs-sy)) scale(0.55);opacity:0;}8%{opacity:1;}100%{transform:translate(var(--jvs-ex),var(--jvs-ey)) scale(1.1);opacity:1;}}',
+      '.jvs-blast-flash{position:absolute;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,0.95) 0%,rgba(255,236,196,0.7) 28%,rgba(255,150,60,0.3) 60%,rgba(255,120,40,0) 100%);animation:jvsFlash 0.45s ease-out forwards;}',
+      '@keyframes jvsFlash{0%{opacity:0;transform:scale(0.3);}22%{opacity:1;}100%{opacity:0;transform:scale(1.2);}}',
+      '.jvs-blast-ring{position:absolute;border-radius:50%;border:2px solid rgba(255,214,160,0.8);animation:jvsRing 0.8s cubic-bezier(0.15,0.7,0.25,1) forwards;}',
+      '@keyframes jvsRing{0%{opacity:0.85;transform:scale(0.1);}100%{opacity:0;transform:scale(1);}}',
+      '.jvs-blast-shard{position:absolute;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,rgba(255,226,170,0.95) 42%,rgba(255,150,60,0) 100%);animation:jvsShard 1.1s cubic-bezier(0.1,0.62,0.28,1) forwards;}',
+      '@keyframes jvsShard{0%{opacity:0;transform:translate(0,0) scale(0.3);}12%{opacity:1;}100%{opacity:0;transform:translate(var(--jvs-dx),var(--jvs-dy)) scale(0.15);}}',
       '.jvs-blast-dot{position:absolute;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:radial-gradient(circle,#ffffff 0%,rgba(255,214,150,0.95) 45%,rgba(255,150,40,0) 100%);animation:jvsBlast 1.25s ease-out forwards;}',
       '@keyframes jvsBlast{0%{transform:translate(0,0) scale(0.4);opacity:0;}12%{opacity:1;}100%{transform:translate(var(--jvs-dx),var(--jvs-dy)) scale(0.25);opacity:0;}}',
       '.jvs-root{position:absolute;inset:0;pointer-events:none;overflow:hidden;contain:strict;}',
@@ -1226,7 +1237,7 @@ window.__ModuleLoader__.load({
     }
 
 
-    /** DOM comet + CSS blast: immune to canvas compositing and erasing. */
+    /** DOM comet: layered head, tapered tail, shed embers, then a shard blast. */
     SphereEngine.prototype.fireCometDom = function () {
       if (typeof document === 'undefined' || !this.canvas) return
       var host = this.cometHost
@@ -1247,14 +1258,31 @@ window.__ModuleLoader__.load({
       comet.style.setProperty('--jvs-sy', (cy + R * 1.32) + 'px')
       comet.style.setProperty('--jvs-ex', cx + 'px')
       comet.style.setProperty('--jvs-ey', cy + 'px')
-      var tail = document.createElement('div')
-      tail.className = 'jvs-comet-tail'
-      var core = document.createElement('div')
-      core.className = 'jvs-comet-core'
-      comet.appendChild(tail)
-      comet.appendChild(core)
+      var layers = ['jvs-tail-outer', 'jvs-tail-inner', 'jvs-head-flare', 'jvs-head-flare2', 'jvs-comet-core']
+      for (var i = 0; i < layers.length; i += 1) {
+        var node = document.createElement('div')
+        node.className = layers[i]
+        comet.appendChild(node)
+      }
       host.appendChild(comet)
       var self = this
+      // embers shed behind the head, following the same translate but delayed
+      for (var e = 0; e < 10; e += 1) {
+        ;(function (idx) {
+          setTimeout(function () {
+            if (!comet.parentNode) return
+            var rectNow = comet.getBoundingClientRect()
+            var ember = document.createElement('div')
+            ember.className = 'jvs-comet-ember'
+            ember.style.left = (rectNow.left - 6 - Math.random() * 18) + 'px'
+            ember.style.top = (rectNow.top - 4 + (Math.random() - 0.5) * 22) + 'px'
+            host.appendChild(ember)
+            setTimeout(function () {
+              if (ember.parentNode) ember.parentNode.removeChild(ember)
+            }, 900)
+          }, idx * 130)
+        })(e)
+      }
       var landed = false
       var land = function () {
         if (landed) return
@@ -1266,31 +1294,45 @@ window.__ModuleLoader__.load({
       setTimeout(land, 2800)
     }
 
-    /** Particle-only explosion at the landing point. */
+    /** Shard blast: flash, two shock rings and 130 shards. */
     SphereEngine.prototype.fireBlastDom = function (cx, cy, R) {
       if (typeof document === 'undefined') return
       var host = this.cometHost
       if (!host || !host.parentNode) return
-      var count = 90
-      for (var i = 0; i < count; i += 1) {
-        var h = (i * 0.6180339887) % 1
-        var ang = h * Math.PI * 2
-        var dist = R * (0.35 + 0.85 * ((i * 0.4142135624) % 1))
-        var dot = document.createElement('div')
-        dot.className = 'jvs-blast-dot'
-        dot.style.left = cx + 'px'
-        dot.style.top = cy + 'px'
-        dot.style.setProperty('--jvs-dx', (Math.cos(ang) * dist).toFixed(1) + 'px')
-        dot.style.setProperty('--jvs-dy', (Math.sin(ang) * dist).toFixed(1) + 'px')
-        dot.style.animationDelay = (i % 6) * 0.012 + 's'
-        dot.style.width = (3 + 4 * (1 - h)).toFixed(1) + 'px'
-        dot.style.height = dot.style.width
-        host.appendChild(dot)
+      var cleanup = []
+      var place = function (node, size) {
+        node.style.left = (cx - size / 2) + 'px'
+        node.style.top = (cy - size / 2) + 'px'
+        node.style.width = size + 'px'
+        node.style.height = size + 'px'
+        host.appendChild(node)
+        cleanup.push(node)
+        return node
+      }
+      var flash = place(document.createElement('div'), R * 1.6)
+      flash.className = 'jvs-blast-flash'
+      var ringA = place(document.createElement('div'), R * 2.4)
+      ringA.className = 'jvs-blast-ring'
+      var ringB = place(document.createElement('div'), R * 2.4)
+      ringB.className = 'jvs-blast-ring'
+      ringB.style.animationDelay = '0.1s'
+      for (var s = 0; s < 130; s += 1) {
+        var h = (s * 0.6180339887) % 1
+        var ang = h * Math.PI * 2 + (s % 6) * 0.19
+        var dist = R * (0.25 + 1.05 * ((s * 0.4142135624) % 1))
+        var size = 3 + 8 * (1 - h)
+        var shard = place(document.createElement('div'), size)
+        shard.className = 'jvs-blast-shard'
+        shard.style.setProperty('--jvs-dx', (Math.cos(ang) * dist).toFixed(1) + 'px')
+        shard.style.setProperty('--jvs-dy', (Math.sin(ang) * dist * 0.92).toFixed(1) + 'px')
+        shard.style.animationDelay = ((s % 8) * 0.012).toFixed(3) + 's'
+      }
+      for (var c = 0; c < cleanup.length; c += 1) {
         ;(function (node) {
           setTimeout(function () {
             if (node.parentNode) node.parentNode.removeChild(node)
-          }, 1600)
-        })(dot)
+          }, 1800)
+        })(cleanup[c])
       }
     }
 
@@ -2275,6 +2317,7 @@ window.__ModuleLoader__.load({
         var engine
         try {
           engine = new SphereEngine(host)
+      setTimeout(function () { engine.fireCometDom() }, 2500)
         } catch (err) {
           try {
             console.error('[jarvis-sphere] engine failed:', err)

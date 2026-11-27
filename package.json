@@ -1,6 +1,6 @@
 {
   "name": "dsh-jarvis-sphere",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "贾维斯风格球形神经元背景：节点、连线与能量脉冲由当前任务的真实执行数据驱动（运行状态、模型流式速率、工具调用），整层穿透点击不影响操作。",
@@ -50,4 +50,5 @@
     }
   }
 }
+
 
