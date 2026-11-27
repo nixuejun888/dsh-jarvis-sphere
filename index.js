@@ -1829,16 +1829,27 @@ function parseChronicleLine(line) {
     if (recent.length) {
       lines.push('- 最近几轮：')
       for (const record of recent) {
-        const label = Array.from(clipLabel(record.u || '')).slice(0, 40).join('')
+        const raw = clipLabel(record.u || '')
+        if (/^MNEMON (?:运行时记忆快照|视图工具|视图路由|视图可用性)/u.test(raw)) continue
+        const label = Array.from(raw).slice(0, 40).join('')
         lines.push('  - ' + (localStamp(record.t) || '') + ' ' + (label || '(无标签)'))
       }
     }
     lines.push('')
     lines.push('## 记忆')
     const memory = memoryHealth()
-    const ratio = Number(memory.memoryRatio) || 0
-    lines.push('- MEMORY.md ' + Math.round(ratio * 100) + '% · USER.md ' + Math.round(Number(memory.userRatio) * 100) + '%')
-    lines.push('- 条目 ' + (Number(memory.total) || 0) + ' · 文档 ' + (Number(memory.documents) || 0) + ' · 空间 ' + (Number(memory.spaces) || 0))
+    const projection = projectMemory(ctx, cfg, memoryCache)
+    const root = resolveMemoryRoot()
+    let userBytes = 0
+    try {
+      if (root) userBytes = statSync(join(root, 'runtime', 'USER.md')).size
+    } catch (err) {
+      userBytes = 0
+    }
+    const userLimit = resolveMemoryLimits().userLimitBytes || 4096
+    const userPct = userBytes ? Math.round((userBytes / userLimit) * 100) : 0
+    lines.push('- MEMORY.md ' + Math.round((Number(memory.memoryRatio) || 0) * 100) + '% · USER.md ' + userPct + '%')
+    lines.push('- 条目 ' + (Number(projection.total) || 0) + ' · 文档 ' + (Number(projection.documents) || 0) + ' · 空间 ' + (Number(projection.spaces) || 0))
     lines.push('- 待复盘 ' + recap.pending.length + ' 条')
     lines.push('')
     lines.push('## 自检')

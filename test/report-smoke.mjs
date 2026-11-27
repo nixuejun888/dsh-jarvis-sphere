@@ -13,7 +13,7 @@ function check(label, ok, extra) {
 const root = mkdtempSync(join(tmpdir(), 'jarvis-report-'))
 const memoryDir = join(root, 'memory')
 mkdirSync(join(memoryDir, 'runtime'), { recursive: true })
-writeFileSync(join(memoryDir, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [] }))
+writeFileSync(join(memoryDir, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [{ content: 'report fixture entry', target: 'memory', importance: 'normal', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }] }))
 writeFileSync(join(memoryDir, 'runtime', 'MEMORY.md'), 'M'.repeat(300))
 writeFileSync(join(memoryDir, 'runtime', 'USER.md'), 'U'.repeat(20))
 const chronicleDir = join(root, 'chronicle')
@@ -99,8 +99,21 @@ function sessionWith(text) {
     check('the report has ## ' + section, new RegExp('^## ' + section + '$', 'mu').test(body), section)
   }
   check('the report shows the turn label', body.includes('把球体 HUD 改成中文'), body.includes('把球体 HUD 改成中文'))
+check('USER ratio is a number, not NaN', /USER\.md \d+%/u.test(body), body.match(/USER\.md [^%]*%/u))
+  check('the report counts the memory entries', /- 条目 [1-9]\d*/u.test(body), body.match(/- 条目 .*/u))
   check('the report shows the self-check status', /- 总体 (OK|DEGRADED|FAIL)/u.test(body), body.match(/- 总体 .*/u))
   check('the report shows the backup path', body.includes(join(root, 'b1')), body.includes(join(root, 'b1')))
+
+  // an old chronicle row that recorded a runtime-context snapshot as a label
+  // must not appear in the report
+  writeFileSync(
+    join(chronicleDir, 'chronicle.jsonl'),
+    JSON.stringify({ t: new Date().toISOString(), d: created.day, s: 's', u: 'MNEMON 运行时记忆快照 条目注解默认为 importance=normal', tools: 1 }) + '\n',
+    { flag: 'a' },
+  )
+  const withSnapshot = await tool.execute({ day: created.day }, {})
+  const snapshotBody = readFileSync(withSnapshot.file, 'utf8')
+  check('a runtime-context snapshot is not listed as a turn', !snapshotBody.includes('MNEMON 运行时记忆快照'), snapshotBody.includes('MNEMON 运行时记忆快照'))
 
   const listed = await tool.execute({ action: 'list' }, {})
   check('list returns the new report', listed.reports.length === 1 && listed.reports[0].day === created.day, listed.reports)
