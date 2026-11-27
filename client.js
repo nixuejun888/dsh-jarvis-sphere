@@ -29,6 +29,8 @@ window.__ModuleLoader__.load({
       'html.jvs-stage .jvs-hud{pointer-events:none;}',
       'html.jvs-stage [data-jvs-chat]{position:fixed !important;top:60px !important;right:16px !important;bottom:16px !important;left:auto !important;width:min(46vw,760px) !important;height:auto !important;z-index:40 !important;border-radius:16px;border:1px solid rgba(120,200,255,0.22);background:rgba(6,9,16,0.88);box-shadow:0 24px 60px rgba(0,0,0,0.55);backdrop-filter:blur(10px);overflow-y:auto !important;}',
       'html.jvs-stage [data-jvs-chat] *{max-width:100%;}',
+      'html.jvs-stage [data-jvs-side]{opacity:0.62;transition:opacity 200ms ease;}',
+      'html.jvs-stage [data-jvs-side]:hover{opacity:1;}',
       'html.jvs-stage [data-jvs-rail]{position:fixed !important;left:16px !important;bottom:16px !important;top:auto !important;right:auto !important;width:min(24vw,300px) !important;max-height:32vh !important;height:auto !important;z-index:41 !important;border-radius:14px;border:1px solid rgba(120,200,255,0.18);background:rgba(6,9,16,0.9);box-shadow:0 18px 40px rgba(0,0,0,0.5);overflow:auto !important;backdrop-filter:blur(10px);}',
       'html.jvs-immersive [data-jvs-panel]{background-color:rgba(6,9,16,0.55) !important;backdrop-filter:blur(3px) saturate(110%);-webkit-backdrop-filter:blur(3px) saturate(110%);border-radius:10px;}',
       'html.jvs-immersive textarea,html.jvs-immersive [contenteditable="true"]{background-color:rgba(6,9,16,0.45) !important;}',
@@ -612,6 +614,23 @@ window.__ModuleLoader__.load({
          that contains the composer. This survives hashed class names. */
       var rail = document.querySelector('[data-rightbar-col]')
       var frame = rail && rail.parentElement
+      if (!frame) {
+        var probeFrame = document.querySelector('textarea')
+        while (probeFrame && probeFrame.parentElement && probeFrame.parentElement !== document.body) probeFrame = probeFrame.parentElement
+        frame = probeFrame
+      }
+      if (frame && frame.children && frame.children.length > 1) {
+        for (var fi = 0; fi < frame.children.length; fi += 1) {
+          var child = frame.children[fi]
+          var cr2 = child.getBoundingClientRect()
+          if (cr2.width > 100 && cr2.width < w * 0.4 && cr2.height > hgt * 0.5) {
+            this.sideWidth = cr2.width
+            child.setAttribute('data-jvs-side', '1')
+            this.sideRegion = child
+            break
+          }
+        }
+      }
       if (frame && seed) {
         var walk = seed
         while (walk && walk.parentElement && walk.parentElement !== frame) walk = walk.parentElement
@@ -738,8 +757,9 @@ window.__ModuleLoader__.load({
       var hgt = this.h || window.innerHeight
       if (!this.stage) return null
       var reserved = Math.min(Math.max(w * 0.46, 380), 780)
-      var free = Math.max(360, w - reserved)
-      return { cx: free * 0.5, cy: hgt * 0.45, R: Math.min(free, hgt) * (this.immersive ? 0.40 : 0.34) }
+      var side = Number(this.sideWidth) || 0
+      var free = Math.max(320, w - reserved - side)
+      return { cx: side + free * 0.5, cy: hgt * 0.45, R: Math.min(free, hgt) * (this.immersive ? 0.40 : 0.34) }
     }
     /** Ctrl+Shift+J 切换沉浸模式；状态存 localStorage，刷新后保持。 */
     SphereEngine.prototype.bindKeys = function () {
